@@ -67,7 +67,7 @@ steps:
       - "dev_deploys"
       - "stg_deploys"
     key: "prod_block"
-  - group: ":rocket: :aws: Parallel Canary Deploys"
+  - group: ":rocket: :aws: :bird: Parallel Canary Deploys"
     key: "canary_deploys"
     steps:
     - label: ":ec2: prod_sm_x86_us-east-1"
