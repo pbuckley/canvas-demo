@@ -67,17 +67,16 @@ steps:
       - "dev_deploys"
       - "stg_deploys"
     key: "prod_block"
-  - block: ":warning: :question: ARE YOU SURE? Deploy to Prod? :warning:"
-    depends_on:
-      - "prod_block"
-    key: "sure_block"
-  - group: ":rocket: :aws: Parallel Production Deploys"
-    key: "prod_deploys"
+  - group: ":rocket: :aws: :bird: Canary Deploys"
+    key: "canary_deploys"
     steps:
     - label: ":ec2: prod_sm_x86_us-east-1"
       command: "echo Deploying to Intel us-east-1"
     - label: ":ec2: prod_sm_arm_us-east-1"
-      command: "echo Deploying to ARM us-east-1"      
+      command: "echo Deploying to ARM us-east-1"    
+  - group: ":rocket: :aws: Parallel Production Deploys"
+    key: "prod_deploys"
+    steps:   
     - label: ":ec2: prod_sm_x86_us-west-2"
       command: "echo Deploying to Intel us-west-2"
     - label: ":ec2: prod_med_arm_us-west-2"
@@ -107,5 +106,5 @@ steps:
     - label: ":ec2: prod_xl8vcpu_arm_us-west-1"
       command: "echo Deploying to ARM us-west-1"
     depends_on:
-      - "sure_block"
+      - "canary_deploys"
 queue: "q1"
