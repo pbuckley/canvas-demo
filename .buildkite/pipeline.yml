@@ -68,13 +68,13 @@ steps:
       - "stg_deploys"
     key: "prod_block"
   - group: ":rocket: :bird: Canary Deploy First Two Prod Servers"
+    key: "canary_deploys"
     - label: ":ec2: prod_sm_x86_us-east-1"
       command: "echo Deploying to Intel us-east-1"
     - label: ":ec2: prod_sm_arm_us-east-1"
       command: "echo Deploying to ARM us-east-1"
     depends_on: 
       - "prod_block"
-    key: "canary_deploys"
   - group: ":rocket: :aws: Parallel Production Deploys"
     key: "prod_deploys"
     steps:  
