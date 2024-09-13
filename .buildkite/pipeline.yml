@@ -72,8 +72,9 @@ steps:
       command: "echo Deploying to Intel us-east-1"
     - label: ":ec2: prod_sm_arm_us-east-1"
       command: "echo Deploying to ARM us-east-1"
+    depends_on: 
+      - "prod_block"
     key: "canary_deploys"
-    depends_on: "prod_block"
   - group: ":rocket: :aws: Parallel Production Deploys"
     key: "prod_deploys"
     steps:  
