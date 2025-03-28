@@ -37,4 +37,8 @@ queue: "q1"
 EOF
 )
 
-echo ${NEW_PIPELINE} | buildkite-agent pipeline upload
+printf "%s\n" "$NEW_PIPELINE" > pipeline-as-artifact.yml
+
+buildkite-agent artifact upload pipeline-as-artifact.yml
+
+printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
