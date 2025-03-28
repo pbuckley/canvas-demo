@@ -7,10 +7,23 @@ export SVC_BAR_HOSTS=$(buildkite-agent meta-data get "svc-bar-hosts")
 export SVC_FOO_PWSH=$(buildkite-agent meta-data get "svc-foo-pwsh")
 export SVC_BAR_PWSH=$(buildkite-agent meta-data get "svc-bar-pwsh")
 
+export FOO_PRE=$(cat <<FOOPRE
+steps:
+  - group: ":rocket: :windows: Service Foo Parallel Deploys"
+    key: "foo_deploys"
+    steps:
+FOOPRE
+)
+
+export FOO_POST=$(cat <<FOOPOST
+queue: "q1"
+FOOPOST
+)
+
 export NEW_PIPELINE=$(cat <<EOF
 steps:
-  - group: ":rocket: :aws: Parallel Production Deploys"
-    key: "prod_deploys"
+  - group: ":rocket: :windows: Parallel Deploys"
+    key: "parallel_deploys"
     steps:
       - label: ":ec2: prod_sm_x86_us-west-2"
         command: "echo Deploying to Intel us-west-2"
@@ -53,13 +66,30 @@ env | grep SVC
 
 # this is it, the loops
 
+echo ${FOO_PRE} > newly_genned_pipeline.yml
+
 IFS=","
 
 read -ra FOO_HOSTS <<< "${SVC_FOO_HOSTS}"
 
 for FOO_HOST in "${FOO_HOSTS[@]}"
 do
-    echo "creating step for ${FOO_HOST} with ${SVC_FOO_VERSION} and ${SVC_FOO_PWSH}"
+    echo "creating step for ${FOO_HOST} with ${SVC_FOO_VER} and ${SVC_FOO_PWSH}"
+    export FOO_BODY=$(cat <<FOOBOD
+steps:
+      - label: ":windows: Deploy Service Foo ${SVC_FOO_VER} to ${FOO_HOST}"
+        command: "echo Deploying Foo ${SVC_FOO_VER} to ${FOO_HOST}..."
+      - label: ":pwsh: Run Powershell postscript ${SVC_FOO_PWSH} for Foo on ${FOO_HOST}"
+        command: "echo Running ${SVC_FOO_PWSH} on ${FOO_HOST}..."
+FOOBOD
+)
+    echo ${FOOBOD} >> newly_genned_pipeline.yml
 done
 
-printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
+echo ${FOO_POST} >> newly_genned_pipeline.yml
+
+# printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
+
+buildkite-agent artifact upload newly_genned_pipeline.yml
+
+buildkite-agent pipeline upload newly_genned_pipeline.yml
