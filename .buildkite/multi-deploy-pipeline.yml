@@ -21,8 +21,8 @@ steps:
         hint: "Provide fully qualified path to an optional PS1 to run post deploy."
         required: false
         default: 'C:\Scripts\Powershell\ServiceFooDefault.PS1'
-      - select: "Service Bar Dev version"
-        key: svc-foo
+      - select: "Service Bar version"
+        key: svc-bar-ver
         options:
           - label: "2.54"
             value: "2.54"

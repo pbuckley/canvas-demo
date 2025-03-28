@@ -51,4 +51,15 @@ EOF
 echo "+++ SVC ENV VARS"
 env | grep SVC
 
+# this is it, the loops
+
+IFS=","
+
+read -ra FOO_HOSTS <<< "${SVC_FOO_HOSTS}"
+
+for FOO_HOST in "${FOO_HOSTS[@]}"
+do
+    echo "creating step for ${FOO_HOST} with ${SVC_FOO_VERSION} and ${SVC_FOO_PWSH}"
+done
+
 printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
