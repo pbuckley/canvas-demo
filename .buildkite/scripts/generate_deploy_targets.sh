@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+export SVC_FOO_VER=$(buildkite-agent meta-data get "svc-foo-ver")
+export SVC_BAR_VER=$(buildkite-agent meta-data get "svc-bar-ver")
+export SVC_FOO_HOSTS=$(buildkite-agent meta-data get "svc-foo-hosts")
+export SVC_BAR_HOSTS=$(buildkite-agent meta-data get "svc-bar-hosts")
+export SVC_FOO_PWSH=$(buildkite-agent meta-data get "svc-foo-pwsh")
+export SVC_BAR_PWSH=$(buildkite-agent meta-data get "svc-bar-pwsh")
+
 export NEW_PIPELINE=$(cat <<EOF
 steps:
   - group: ":rocket: :aws: Parallel Production Deploys"
@@ -37,8 +44,11 @@ queue: "q1"
 EOF
 )
 
-printf "%s\n" "$NEW_PIPELINE" > pipeline-as-artifact.yml
+# printf "%s\n" "$NEW_PIPELINE" > pipeline-as-artifact.yml
 
-buildkite-agent artifact upload pipeline-as-artifact.yml
+# buildkite-agent artifact upload pipeline-as-artifact.yml
+
+echo "+++ SVC ENV VARS"
+env | grep SVC
 
 printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
