@@ -56,8 +56,14 @@ do
     echo "creating step for ${FOO_HOST} with ${SVC_FOO_VER} and ${SVC_FOO_PWSH}"
     export FOO_BODY=$(cat <<FOOBOD
       - label: ":windows: Deploy Service Foo ${SVC_FOO_VER} to ${FOO_HOST}"
-        command: "echo Deploying Foo ${SVC_FOO_VER} to ${FOO_HOST}..."
-      - label: ":pwsh: Run Powershell postscript ${SVC_FOO_PWSH} for Foo on ${FOO_HOST}"
+        command: ".buildkite/scripts/run_mock_deploy.sh"
+        retry:
+          automatic:
+            - exit_status: 4
+              limit: 2
+            - exit_status: *
+              limit: 3
+      - label: ":pwsh: Run ${SVC_FOO_PWSH} for Foo on ${FOO_HOST}"
         command: "echo Running ${SVC_FOO_PWSH} on ${FOO_HOST}..."
 FOOBOD
 )
@@ -76,8 +82,14 @@ do
     echo "creating step for ${BAR_HOST} with ${SVC_BAR_VER} and ${SVC_BAR_PWSH}"
     export BAR_BODY=$(cat <<BARBOD
       - label: ":windows: Deploy Service Bar ${SVC_BAR_VER} to ${BAR_HOST}"
-        command: "echo Deploying Bar ${SVC_BAR_VER} to ${BAR_HOST}..."
-      - label: ":pwsh: Run Powershell postscript ${SVC_BAR_PWSH} for Bar on ${BAR_HOST}"
+        command: ".buildkite/scripts/run_mock_deploy.sh"
+        retry:
+          automatic:
+            - exit_status: 3
+              limit: 2
+            - exit_status: *
+              limit: 4
+      - label: ":pwsh: Run ${SVC_BAR_PWSH} for Bar on ${BAR_HOST}"
         command: "echo Running ${SVC_BAR_PWSH} on ${BAR_HOST}..."
 BARBOD
 )
@@ -93,8 +105,14 @@ do
     echo "creating step for ${WEB_HOST} with ${SVC_WEB_VER} and ${SVC_WEB_PWSH}"
     export WEB_BODY=$(cat <<WEBBOD
       - label: ":windows: Deploy Service Web ${SVC_WEB_VER} to ${WEB_HOST}"
-        command: "echo Deploying Web ${SVC_WEB_VER} to ${WEB_HOST}..."
-      - label: ":pwsh: Run Powershell postscript ${SVC_WEB_PWSH} for Web on ${WEB_HOST}"
+        command: ".buildkite/scripts/run_mock_deploy.sh"
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: *
+              limit: 2
+      - label: ":pwsh: Run ${SVC_WEB_PWSH} for Web on ${WEB_HOST}"
         command: "echo Running ${SVC_WEB_PWSH} on ${WEB_HOST}..."
 WEBBOD
 )
