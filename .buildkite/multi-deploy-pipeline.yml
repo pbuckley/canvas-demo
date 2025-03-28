@@ -1,5 +1,6 @@
 steps:
   - input: "Provide versions and targets for :dotnet: deploy"
+    key: get-deploy-inputs
     fields:
       - select: "Service Foo version"
         key: svc-foo-ver
@@ -30,5 +31,8 @@ steps:
         required: false
         default: 'C:\Scripts\Powershell\ServiceBarDefault.PS1'
   - label: "Generate deploy targets :slot_machine:"
-    command: "./scripts/generate_deploy_targets.sh"
+    command: ".buildkite/scripts/generate_deploy_targets.sh"
+    key: gen-deploy-inputs
+    depends_on:
+      - get-deploy-inputs
 queue: "q1"
