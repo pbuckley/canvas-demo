@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 
-echo "+++ Generate a random exit code between 1-4"
-exit $((0 + $RANDOM % 4))
+export REXITCODE=$((0 + $RANDOM % 4))
+echo "+++ Generate a random exit code between 1-4, this time its ${REXITCODE}"
+exit ${REXITCODE}
+
