@@ -66,7 +66,14 @@ env | grep SVC
 
 # this is it, the loops
 
-echo ${FOO_PRE} > newly_genned_pipeline.yml
+# again, echo and yaml no worky
+# echo ${FOO_PRE} > newly_genned_pipeline.yml
+
+# but printf maybe finey?
+printf "%s\n" "$FOO_PRE" > newly_genned_pipeline.yml
+
+echo "+++ With just the FOO_PRE"
+cat newly_genned_pipeline.yml
 
 IFS=","
 
@@ -76,20 +83,27 @@ for FOO_HOST in "${FOO_HOSTS[@]}"
 do
     echo "creating step for ${FOO_HOST} with ${SVC_FOO_VER} and ${SVC_FOO_PWSH}"
     export FOO_BODY=$(cat <<FOOBOD
-steps:
       - label: ":windows: Deploy Service Foo ${SVC_FOO_VER} to ${FOO_HOST}"
         command: "echo Deploying Foo ${SVC_FOO_VER} to ${FOO_HOST}..."
       - label: ":pwsh: Run Powershell postscript ${SVC_FOO_PWSH} for Foo on ${FOO_HOST}"
         command: "echo Running ${SVC_FOO_PWSH} on ${FOO_HOST}..."
 FOOBOD
 )
-    echo ${FOOBOD} >> newly_genned_pipeline.yml
+    echo ${FOO_BODY} >> newly_genned_pipeline.yml
 done
 
+echo "+++ NOW WITH FOOBOD"
+cat newly_genned_pipeline.yml
+
 echo ${FOO_POST} >> newly_genned_pipeline.yml
+
+echo "+++ Now with FOOPOST"
+cat newly_genned_pipeline.yml
 
 # printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
 
 buildkite-agent artifact upload newly_genned_pipeline.yml
 
 buildkite-agent pipeline upload newly_genned_pipeline.yml
+
+rm -f newly_genned_pipeline.yml
