@@ -59,10 +59,8 @@ do
         command: ".buildkite/scripts/run_mock_deploy.sh"
         retry:
           automatic:
-            - exit_status: 4
-              limit: 2
             - exit_status: "*"
-              limit: 3
+              limit: 10
       - label: ":pwsh: Run ${SVC_FOO_PWSH} for Foo on ${FOO_HOST}"
         command: "echo Running ${SVC_FOO_PWSH} on ${FOO_HOST}..."
 FOOBOD
@@ -85,10 +83,8 @@ do
         command: ".buildkite/scripts/run_mock_deploy.sh"
         retry:
           automatic:
-            - exit_status: 3
-              limit: 2
             - exit_status: "*"
-              limit: 4
+              limit: 10
       - label: ":pwsh: Run ${SVC_BAR_PWSH} for Bar on ${BAR_HOST}"
         command: "echo Running ${SVC_BAR_PWSH} on ${BAR_HOST}..."
 BARBOD
@@ -108,10 +104,8 @@ do
         command: ".buildkite/scripts/run_mock_deploy.sh"
         retry:
           automatic:
-            - exit_status: 1
-              limit: 1
             - exit_status: "*"
-              limit: 2
+              limit: 10
       - label: ":pwsh: Run ${SVC_WEB_PWSH} for Web on ${WEB_HOST}"
         command: "echo Running ${SVC_WEB_PWSH} on ${WEB_HOST}..."
 WEBBOD
