@@ -1,5 +1,5 @@
 steps:
-  - label: "initial command"
+  - label: "pre command"
     command: python3 /Users/peter/proj/canvas-demo/.buildkite/scripts/get_releases.py
     agents:
       queue: "mccue"
