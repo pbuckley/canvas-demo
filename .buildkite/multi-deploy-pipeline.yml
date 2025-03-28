@@ -1,0 +1,34 @@
+steps:
+  - input: "Provide versions and targets for :dotnet: deploy"
+    fields:
+      - select: "Service Foo version"
+        key: svc-foo-ver
+        options:
+          - label: "1.33"
+            value: "1.33"
+          - label: "1.35"
+            value: "1.38"
+          - label: "1.38"
+            value: "1.38"
+      - text: ":pwsh: Service Foo post config script"
+        key: "svc-foo-pwsh"
+        hint: "Provide fully qualified path to an optional PS1 to run post deploy."
+        required: false
+        default: "C:\Scripts\Powershell\ServiceFooDefault.PS1"
+      - select: "Service Bar Dev version"
+        key: svc-foo
+        options:
+          - label: "2.54"
+            value: "2.54"
+          - label: "2.79"
+            value: "2.79"
+          - label: "3.01RC"
+            value: "3.01RC"
+      - text: ":pwsh: Service Bar Dev post config script"
+        key: "svc-bar-pwsh"
+        hint: "Provide fully qualified path to an optional PS1 to run post deploy."
+        required: false
+        default: "C:\Scripts\Powershell\ServiceBarDefault.PS1"
+  - label: "Generate deploy targets :slot_machine:"
+    command: "./scripts/generate_deploy_targets.sh"
+queue: "q1"
