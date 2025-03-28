@@ -4,10 +4,13 @@ IFS=","
 
 export SVC_FOO_VER=$(buildkite-agent meta-data get "svc-foo-ver")
 export SVC_BAR_VER=$(buildkite-agent meta-data get "svc-bar-ver")
+export SVC_WEB_VER=$(buildkite-agent meta-data get "svc-web-ver")
 export SVC_FOO_HOSTS=$(buildkite-agent meta-data get "svc-foo-hosts")
 export SVC_BAR_HOSTS=$(buildkite-agent meta-data get "svc-bar-hosts")
+export SVC_WEB_HOSTS=$(buildkite-agent meta-data get "svc-web-hosts")
 export SVC_FOO_PWSH=$(buildkite-agent meta-data get "svc-foo-pwsh")
 export SVC_BAR_PWSH=$(buildkite-agent meta-data get "svc-bar-pwsh")
+export SVC_WEB_PWSH=$(buildkite-agent meta-data get "svc-web-pwsh")
 
 export FOO_PRE=$(cat <<FOOPRE
 steps:
@@ -22,6 +25,13 @@ export BAR_PRE=$(cat <<BARPRE
     key: "bar_deploys"
     steps:
 BARPRE
+)
+
+export WEB_PRE=$(cat <<WEBPRE
+  - group: ":rocket: :windows: Service Web Parallel Deploys"
+    key: "web_deploys"
+    steps:
+WEBPRE
 )
 
 export ALL_POST=$(cat <<ALLPOST
@@ -72,6 +82,23 @@ do
 BARBOD
 )
     echo ${BAR_BODY} >> newly_genned_pipeline.yml
+done
+
+echo ${WEB_PRE} >> newly_genned_pipeline.yml
+
+read -ra WEB_HOSTS <<< "${SVC_WEB_HOSTS}"
+
+for WEB_HOST in "${WEB_HOSTS[@]}"
+do
+    echo "creating step for ${WEB_HOST} with ${SVC_WEB_VER} and ${SVC_WEB_PWSH}"
+    export WEB_BODY=$(cat <<WEBBOD
+      - label: ":windows: Deploy Service Web ${SVC_WEB_VER} to ${WEB_HOST}"
+        command: "echo Deploying Web ${SVC_WEB_VER} to ${WEB_HOST}..."
+      - label: ":pwsh: Run Powershell postscript ${SVC_WEB_PWSH} for Web on ${WEB_HOST}"
+        command: "echo Running ${SVC_WEB_PWSH} on ${WEB_HOST}..."
+WEBBOD
+)
+    echo ${WEB_BODY} >> newly_genned_pipeline.yml
 done
 
 echo ${ALL_POST} >> newly_genned_pipeline.yml

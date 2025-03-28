@@ -40,6 +40,25 @@ steps:
         hint: "Comma separated list of hosts to deploy Service Bar onto"
         required: true
         default: "file_server01,file_server02,file_server03"
+      - select: "Service Web version"
+        key: svc-web-ver
+        options:
+          - label: "7.45"
+            value: "7.45"
+          - label: "8.19"
+            value: "8.19"
+          - label: "8.04a"
+            value: "8.04a"
+      - text: ":windows: Service Web Host List"
+        key: "svc-web-hosts"
+        hint: "Comma separated list of hosts to deploy Service Web onto"
+        required: true
+        default: "web_server1103,web_server2984,web_server1849"
+      - text: ":pwsh: Service Web post config script"
+        key: "svc-web-pwsh"
+        hint: "Provide filename for optional PS1 to run post deploy."
+        required: false
+        default: "ServiceWebDefault.PS1"
   - label: "Generate deploy targets :slot_machine:"
     command: ".buildkite/scripts/generate_deploy_targets.sh"
     key: gen-deploy-inputs
