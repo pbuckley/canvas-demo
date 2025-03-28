@@ -14,7 +14,7 @@ steps:
         key: "svc-foo-pwsh"
         hint: "Provide fully qualified path to an optional PS1 to run post deploy."
         required: false
-        default: "C:\Scripts\Powershell\ServiceFooDefault.PS1"
+        default: 'C:\Scripts\Powershell\ServiceFooDefault.PS1'
       - select: "Service Bar Dev version"
         key: svc-foo
         options:
@@ -28,7 +28,7 @@ steps:
         key: "svc-bar-pwsh"
         hint: "Provide fully qualified path to an optional PS1 to run post deploy."
         required: false
-        default: "C:\Scripts\Powershell\ServiceBarDefault.PS1"
+        default: 'C:\Scripts\Powershell\ServiceBarDefault.PS1'
   - label: "Generate deploy targets :slot_machine:"
     command: "./scripts/generate_deploy_targets.sh"
 queue: "q1"
