@@ -1,4 +1,6 @@
 steps:
+  - label: "initial command"
+    command: python .buildkite/scripts/get_releases.py
   - input: "Provide versions and targets for :dotnet: deploy"
     key: get-deploy-inputs
     fields:
