@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+IFS=","
+
 export SVC_FOO_VER=$(buildkite-agent meta-data get "svc-foo-ver")
 export SVC_BAR_VER=$(buildkite-agent meta-data get "svc-bar-ver")
 export SVC_FOO_HOSTS=$(buildkite-agent meta-data get "svc-foo-hosts")
@@ -15,67 +17,27 @@ steps:
 FOOPRE
 )
 
-export FOO_POST=$(cat <<FOOPOST
-queue: "q1"
-FOOPOST
-)
-
-export NEW_PIPELINE=$(cat <<EOF
-steps:
-  - group: ":rocket: :windows: Parallel Deploys"
-    key: "parallel_deploys"
+export BAR_PRE=$(cat <<BARPRE
+  - group: ":rocket: :windows: Service Bar Parallel Deploys"
+    key: "bar_deploys"
     steps:
-      - label: ":ec2: prod_sm_x86_us-west-2"
-        command: "echo Deploying to Intel us-west-2"
-      - label: ":ec2: prod_med_arm_us-west-2"
-        command: "echo Deploying to ARM us-west-2"
-      - label: ":ec2: prod_lg_x86_us-east-2"
-        command: "echo Deploying to Intel us-east-2"
-      - label: ":ec2: prod_xl_arm_us-east-2"
-        command: "echo Deploying to ARM us-east-2"
-      - label: ":ec2: prod_lg_x86_us-west-1"
-        command: "echo Deploying to Intel us-west-1"
-      - label: ":ec2: prod_xl_arm_us-west-1"
-        command: "echo Deploying to ARM us-west-1"
-      - label: ":ec2: prod_med_x86_us-east-1"
-        command: "echo Deploying to Intel us-east-1"
-      - label: ":ec2: prod_xs_arm_us-east-1"
-        command: "echo Deploying to ARM us-east-1"
-      - label: ":ec2: prod_xs_x86_us-west-2"
-        command: "echo Deploying to Intel us-west-2"
-      - label: ":ec2: prod_xl8vcpu_arm_us-west-2"
-        command: "echo Deploying to ARM us-west-2"
-      - label: ":ec2: prod_xl8vcpu_x86_us-east-2"
-        command: "echo Deploying to Intel us-east-2"
-      - label: ":ec2: prod_lg32gb_arm_us-east-2"
-        command: "echo Deploying to ARM us-east-2"
-      - label: ":ec2: prod_lg32gb_x86_us-west-1"
-        command: "echo Deploying to Intel us-west-1"
-      - label: ":ec2: prod_xl8vcpu_arm_us-west-1"
-        command: "echo Deploying to ARM us-west-1"
-queue: "q1"
-EOF
+BARPRE
 )
 
-# printf "%s\n" "$NEW_PIPELINE" > pipeline-as-artifact.yml
-
-# buildkite-agent artifact upload pipeline-as-artifact.yml
+export ALL_POST=$(cat <<ALLPOST
+queue: "q1"
+ALLPOST
+)
 
 echo "+++ SVC ENV VARS"
 env | grep SVC
 
 # this is it, the loops
 
-# again, echo and yaml no worky
-# echo ${FOO_PRE} > newly_genned_pipeline.yml
-
-# but printf maybe finey?
 printf "%s\n" "$FOO_PRE" > newly_genned_pipeline.yml
 
 echo "+++ With just the FOO_PRE"
 cat newly_genned_pipeline.yml
-
-IFS=","
 
 read -ra FOO_HOSTS <<< "${SVC_FOO_HOSTS}"
 
@@ -95,12 +57,27 @@ done
 echo "+++ NOW WITH FOOBOD"
 cat newly_genned_pipeline.yml
 
-echo ${FOO_POST} >> newly_genned_pipeline.yml
+echo ${BAR_PRE} >> newly_genned_pipeline.yml
 
-echo "+++ Now with FOOPOST"
+read -ra BAR_HOSTS <<< "${SVC_BAR_HOSTS}"
+
+for BAR_HOST in "${BAR_HOSTS[@]}"
+do
+    echo "creating step for ${BAR_HOST} with ${SVC_BAR_VER} and ${SVC_BAR_PWSH}"
+    export BAR_BODY=$(cat <<BARBOD
+      - label: ":windows: Deploy Service Bar ${SVC_BAR_VER} to ${BAR_HOST}"
+        command: "echo Deploying Bar ${SVC_BAR_VER} to ${BAR_HOST}..."
+      - label: ":pwsh: Run Powershell postscript ${SVC_BAR_PWSH} for Bar on ${BAR_HOST}"
+        command: "echo Running ${SVC_BAR_PWSH} on ${BAR_HOST}..."
+BARBOD
+)
+    echo ${BAR_BODY} >> newly_genned_pipeline.yml
+done
+
+echo ${ALL_POST} >> newly_genned_pipeline.yml
+
+echo "+++ Now with ALLPOST"
 cat newly_genned_pipeline.yml
-
-# printf "%s\n" "$NEW_PIPELINE" | buildkite-agent pipeline upload
 
 buildkite-agent artifact upload newly_genned_pipeline.yml
 
