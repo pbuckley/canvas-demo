@@ -1,6 +1,8 @@
 steps:
   - label: "initial command"
-    command: python .buildkite/scripts/get_releases.py
+    command: python3 /Users/peter/proj/canvas-demo/.buildkite/scripts/get_releases.py
+    agents:
+      queue: "mccue"
   - input: "Provide versions and targets for :dotnet: deploy"
     key: get-deploy-inputs
     fields:
