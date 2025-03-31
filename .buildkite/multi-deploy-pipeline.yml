@@ -1,6 +1,6 @@
 steps:
   - label: 'pre command'
-    command: BK_API_TOKEN=$(buildkite-agent secret get readtokenpb) && curl -H "Authorization: Bearer ${BK_API_TOKEN}" -X GET "https://api.buildkite.com/v2/organizations/demo/pipelines/service-foo/builds"
+    command: BK_API_TOKEN=$(buildkite-agent secret get readtokenpb) && curl -H "Authorization\: Bearer ${BK_API_TOKEN}" -X GET "https\://api.buildkite.com/v2/organizations/demo/pipelines/service-foo/builds"
   - input: 'Provide versions and targets for :dotnet: deploy'
     key: get-deploy-inputs
     fields:
