@@ -4,11 +4,8 @@
 # build an input step based on the services latest released versions
 # which are in fact meta-data on their named pipelines
 
-#import requests # maybe switch to this, making it avail on the custom hosted agent image
-import subprocess
-# import urllib.request
 from urllib.request import Request, urlopen
-from os import environ,popen
+from os import getenv, popen
 import json
 from benedict import benedict
 
@@ -19,19 +16,19 @@ def generate_pipeline():
     base_pipeline.to_yaml(filepath='generated_pipeline.yml')
 
 
+def fetch_bk_api_token():
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        print("In hosted env, fetching bk api token from secret")
+        return str.strip(popen("buildkite-agent secret get readtokenpb").read())
+    else:
+        print("Running locally, fetching bk api token from env var BK_API_TOKEN")
+        return getenv("BK_API_TOKEN")
+
+
 def get_release_versions(service_pipelines):
     print(f"Getting release versions for {service_pipelines}")
-# on a hosted agent, but we need python and the whole custom image dealio
-    # api_token = subprocess.run(['buildkite-agent', 'secret', 'get', 'readtokenpb'], stdout=subprocess.PIPE).stdout.decode('utf-8')
-    # so, TIL, subprocess has no context and is worthless for nearly everything anyone would ever want to do
-    api_token = str.strip(popen("buildkite-agent secret get readtokenpb").read())
 
-    ## local run
-    # api_token = environ["BK_API_TOKEN"]
-    # print(api_token)
-
-    # headers = {'Authorization: Bearer': api_token}
-    # svc_builds = requests.get('https://api.buildkite.com/v2/organizations/demo/pipelines/service-foo/builds', headers=headers)
+    api_token = fetch_bk_api_token()
 
     build_request = Request("https://api.buildkite.com/v2/organizations/demo/pipelines/service-foo/builds")
     build_request.add_header('Authorization', "Bearer " + api_token)
