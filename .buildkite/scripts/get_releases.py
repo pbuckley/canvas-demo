@@ -22,10 +22,10 @@ def generate_pipeline():
 def get_release_versions(service_pipelines):
     print(f"Getting release versions for {service_pipelines}")
 # on a hosted agent, but we need python and the whole custom image dealio
-    # api_token = subprocess.run(['buildkite-agent', 'secret', 'get', 'readtokenpb'], stdout=subprocess.PIPE).stdout.decode('utf-8')
+    api_token = subprocess.run(['buildkite-agent', 'secret', 'get', 'readtokenpb'], stdout=subprocess.PIPE).stdout.decode('utf-8')
 
     ## local run
-    api_token = environ["BK_API_TOKEN"]
+    # api_token = environ["BK_API_TOKEN"]
     # print(api_token)
 
     # headers = {'Authorization: Bearer': api_token}

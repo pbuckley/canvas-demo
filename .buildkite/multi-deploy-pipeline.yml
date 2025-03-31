@@ -1,71 +1,69 @@
 steps:
-  - label: "pre command"
-    command: python3 /Users/peter/proj/canvas-demo/.buildkite/scripts/get_releases.py
-    agents:
-      queue: "mccue"
-  - input: "Provide versions and targets for :dotnet: deploy"
+  - label: 'pre command'
+    command: python3 .buildkite/scripts/get_releases.py
+  - input: 'Provide versions and targets for :dotnet: deploy'
     key: get-deploy-inputs
     fields:
-      - select: "Service Foo version"
+      - select: 'Service Foo version'
         key: svc-foo-ver
         options:
-          - label: "1.33"
-            value: "1.33"
-          - label: "1.35"
-            value: "1.38"
-          - label: "1.38"
-            value: "1.38"
-      - text: ":windows: Service Foo Host List"
-        key: "svc-foo-hosts"
-        hint: "Comma separated list of hosts to deploy Service Foo onto"
+          - label: '1.33'
+            value: '1.33'
+          - label: '1.35'
+            value: '1.38'
+          - label: '1.38'
+            value: '1.38'
+      - text: ':windows: Service Foo Host List'
+        key: 'svc-foo-hosts'
+        hint: 'Comma separated list of hosts to deploy Service Foo onto'
         required: true
-        default: "iis_server01,iis_server02,iis_server03"
-      - text: ":pwsh: Service Foo post config script"
-        key: "svc-foo-pwsh"
-        hint: "Provide filename for optional PS1 to run post deploy."
+        default: 'iis_server01,iis_server02,iis_server03'
+      - text: ':pwsh: Service Foo post config script'
+        key: 'svc-foo-pwsh'
+        hint: 'Provide filename for optional PS1 to run post deploy.'
         required: false
-        default: "ServiceFooDefault.PS1"
-      - select: "Service Bar version"
+        default: 'ServiceFooDefault.PS1'
+      - select: 'Service Bar version'
         key: svc-bar-ver
         options:
-          - label: "2.54"
-            value: "2.54"
-          - label: "2.79"
-            value: "2.79"
-          - label: "3.01RC"
-            value: "3.01RC"
-      - text: ":pwsh: Service Bar post config script"
-        key: "svc-bar-pwsh"
-        hint: "Provide filename for optional PS1 to run post deploy."
+          - label: '2.54'
+            value: '2.54'
+          - label: '2.79'
+            value: '2.79'
+          - label: '3.01RC'
+            value: '3.01RC'
+      - text: ':pwsh: Service Bar post config script'
+        key: 'svc-bar-pwsh'
+        hint: 'Provide filename for optional PS1 to run post deploy.'
         required: false
-        default: "ServiceBarDefault.PS1"
-      - text: ":windows: Service Bar Host List"
-        key: "svc-bar-hosts"
-        hint: "Comma separated list of hosts to deploy Service Bar onto"
+        default: 'ServiceBarDefault.PS1'
+      - text: ':windows: Service Bar Host List'
+        key: 'svc-bar-hosts'
+        hint: 'Comma separated list of hosts to deploy Service Bar onto'
         required: true
-        default: "file_server01,file_server02,file_server03"
-      - select: "Service Web version"
+        default: 'file_server01,file_server02,file_server03'
+      - select: 'Service Web version'
         key: svc-web-ver
         options:
-          - label: "7.45"
-            value: "7.45"
-          - label: "8.19"
-            value: "8.19"
-          - label: "8.04a"
-            value: "8.04a"
-      - text: ":windows: Service Web Host List"
-        key: "svc-web-hosts"
-        hint: "Comma separated list of hosts to deploy Service Web onto"
+          - label: '7.45'
+            value: '7.45'
+          - label: '8.19'
+            value: '8.19'
+          - label: '8.04a'
+            value: '8.04a'
+      - text: ':windows: Service Web Host List'
+        key: 'svc-web-hosts'
+        hint: 'Comma separated list of hosts to deploy Service Web onto'
         required: true
-        default: "web_server1103,web_server2984,web_server1849"
-      - text: ":pwsh: Service Web post config script"
-        key: "svc-web-pwsh"
-        hint: "Provide filename for optional PS1 to run post deploy."
+        default: 'web_server1103,web_server2984,web_server1849'
+      - text: ':pwsh: Service Web post config script'
+        key: 'svc-web-pwsh'
+        hint: 'Provide filename for optional PS1 to run post deploy.'
         required: false
-        default: "ServiceWebDefault.PS1"
-  - label: "Generate deploy targets :slot_machine:"
-    command: ".buildkite/scripts/generate_deploy_targets.sh"
+        default: 'ServiceWebDefault.PS1'
+  - label: 'Generate deploy targets :slot_machine:'
+    command: '.buildkite/scripts/generate_deploy_targets.sh'
     key: gen-deploy-inputs
     depends_on:
       - get-deploy-inputs
-queue: "q1"
+queue: 'q1'
