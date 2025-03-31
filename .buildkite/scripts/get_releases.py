@@ -8,7 +8,7 @@
 import subprocess
 # import urllib.request
 from urllib.request import Request, urlopen
-from os import environ,system
+from os import environ,popen
 import json
 from benedict import benedict
 
@@ -24,7 +24,7 @@ def get_release_versions(service_pipelines):
 # on a hosted agent, but we need python and the whole custom image dealio
     # api_token = subprocess.run(['buildkite-agent', 'secret', 'get', 'readtokenpb'], stdout=subprocess.PIPE).stdout.decode('utf-8')
     # so, TIL, subprocess has no context and is worthless for nearly everything anyone would ever want to do
-    api_token = system("buildkite-agent secret get readtokenpb")
+    api_token = str.strip(popen("buildkite-agent secret get readtokenpb").read())
 
     ## local run
     # api_token = environ["BK_API_TOKEN"]
