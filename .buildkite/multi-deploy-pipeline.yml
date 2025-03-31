@@ -1,6 +1,6 @@
 steps:
   - label: 'pre command'
-    command: '.buildkite/scripts/test_curl.sh'
+    command: 'python3 .buildkite/scripts/get_releases.py'
   - input: 'Provide versions and targets for :dotnet: deploy'
     key: get-deploy-inputs
     fields:
