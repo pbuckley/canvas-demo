@@ -52,6 +52,33 @@ def get_release_versions_from_metadata(svc_name, full_metadata, svc_dict, svc_bu
     return svc_dict
 
 
+def get_hosts_from_metadata(svc_name, full_metadata, svc_dict, svc_hosts_set):
+    hosts_md_name = "deploy-hosts"
+
+    if full_metadata.get(hosts_md_name) is not None:
+        print(f"Full metadata for {svc_name}: {full_metadata}")
+        svc_hosts = [host.strip() for host in full_metadata[hosts_md_name].split(",")]
+        print(f"{svc_name} has svc_hosts as a list: {svc_hosts}")
+        svc_hosts_set.update(svc_hosts)
+        print(f"Found a {svc_name} host list: {svc_hosts}")
+        svc_dict[svc_name] = sorted(svc_hosts_set)
+
+    return svc_dict
+
+
+def get_postscript_from_metadata(svc_name, full_metadata, svc_dict, svc_postscript):
+    postscript_md_name = "deploy-postscript"
+
+    if full_metadata.get(postscript_md_name) is not None:
+        print(f"Full metadata for {svc_name}: {full_metadata}")
+        postscript = full_metadata[postscript_md_name]
+        print(f"Found a {svc_name} postscript: {postscript}")
+        svc_postscript.add(postscript)
+        svc_dict[svc_name] = sorted(svc_postscript)
+
+    return svc_dict
+
+
 def get_release_versions(api_token, org_name, deployable_service_pipelines):
     # currently, this fn is tailored to release version
     # what if we generic-ified it, made it just grab the metadata from all the builds
@@ -93,9 +120,13 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
             one_build_json = json.loads(one_build_result.decode('utf-8'))
 
             svc_build_versions = set()
+            svc_hosts_set = set()
+            svc_postscript = set()
             for build_details in one_build_json:
+                # do not like that I am assigning over and over to svc_dict here but it works?
                 svc_dict = get_release_versions_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_build_versions)
-
+                svc_dict = get_hosts_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_hosts_set)
+                svc_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_postscript)
     return svc_dict
 
 
