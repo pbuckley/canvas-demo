@@ -184,7 +184,7 @@ def translate_service_postscripts_to_bk_yaml(service, all_services_and_pwsh):
     for k, v in all_services_and_pwsh.items():
         if k == service:
             keysafe_k = k.replace(" ", "-").lower()
-            option_list = [] # can be a scalar string as csv I bet, no need for a list here
+            option_list = ",".join(v)
             generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
             print(generated_svc_yaml)
     return generated_svc_yaml
@@ -216,7 +216,7 @@ def main():
         print(f"Generating master_input_dict for {service}, version_dict_of_all_svcs is: {version_dict_of_all_svcs}") # it is NOT duplicated here, versions are ok
         master_input_dict[service].append(translate_service_versions_to_bk_yaml(service, version_dict_of_all_svcs))
         master_input_dict[service].append(translate_service_hosts_to_bk_yaml(service, host_dict_of_all_svcs))
-        # master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(service, post_dict_of_all_svcs))
+        master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(service, post_dict_of_all_svcs))
     # translate_service_versions_to_bk_yaml(dict_of_all_svcs)
     print(f"Master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline)
