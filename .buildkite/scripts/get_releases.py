@@ -121,36 +121,39 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
             one_build_result = urlopen(build_request).read()
             one_build_json = json.loads(one_build_result.decode('utf-8'))
 
-            svc_build_versions = set()
+            svc_versions_set = set()
             svc_hosts_set = set()
-            svc_postscript = set()
+            svc_postscript_set = set()
             for build_details in one_build_json:
                 # do not like that I am assigning over and over to svc_dict here but it works?
-                svc_dict = get_release_versions_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_build_versions)
+                svc_dict = get_release_versions_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_versions_set)
                 host_dict = get_hosts_from_metadata(svc_name, build_details['meta_data'], host_dict, svc_hosts_set)
-                post_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], post_dict, svc_postscript)
+                post_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], post_dict, svc_postscript_set)
     return svc_dict, host_dict, post_dict
 
 
 # obvi these translate fns have a lot in common, could be refactored in the future
-def translate_service_versions_to_bk_yaml(all_services_and_versions):
+def translate_service_versions_to_bk_yaml(service, all_services_and_versions):
     # as I compare this to the base_pipeline benedict we have currently
     # I think we need to have all the metadata in the service pipeline
     # otherwise how will we pair the hosts and pwsh with the versions?
     # I think it will be too brittle to shoehorn just the versions in there
     # we need to take "everything" for each of our fields - one for each service -
     # and iterate over them here
+    generated_svc_yaml = []
     for k, v in all_services_and_versions.items():
-        keysafe_k = k.replace(" ", "-").lower()
-        option_list = []
-        for ver in v:
-            option_list.append({"label": ver, "value": ver})
-        generated_svc_yaml = {"select": f"{k} version", "key": f"{keysafe_k}-ver", "options": option_list}
-        print(f"{k} generated yaml is: {generated_svc_yaml}")
+        if k == service:
+            keysafe_k = k.replace(" ", "-").lower()
+            option_list = []
+            for ver in v:
+                option_list.append({"label": ver, "value": ver})
+            generated_svc_yaml.append({"select": f"{k} version", "key": f"{keysafe_k}-ver", "options": option_list})
+            # new problem, at this point this contains duplicates, I have 5 'select's!!!
+            print(f"{k} generated yaml is: {generated_svc_yaml}")
     return generated_svc_yaml
 
 
-def translate_service_hosts_to_bk_yaml(all_services_and_hosts):
+def translate_service_hosts_to_bk_yaml(service, all_services_and_hosts):
     # as I compare this to the base_pipeline benedict we have currently
     # I think we need to have all the metadata in the service pipeline
     # otherwise how will we pair the hosts and pwsh with the versions?
@@ -162,14 +165,15 @@ def translate_service_hosts_to_bk_yaml(all_services_and_hosts):
     # I want to keep the emoji - do I make that metadata, too, or can I go with the pipeline's emoji
     # and grab from one of our existing API calls to reuse it here?
     for k, v in all_services_and_hosts.items():
-        keysafe_k = k.replace(" ", "-").lower()
-        option_list = ",".join(v)
-        generated_svc_yaml = {"text": f"{k} host list", "key": f"{keysafe_k}-hosts", "default": option_list, "hint": f"Comma separated list of hosts to deploy {k} onto", "required": True}
-        print(generated_svc_yaml)
+        if k == service: # only do translation for the one service we are passed as key
+            keysafe_k = k.replace(" ", "-").lower()
+            option_list = ",".join(v)
+            generated_svc_yaml = {"text": f"{k} host list", "key": f"{keysafe_k}-hosts", "default": option_list, "hint": f"Comma separated list of hosts to deploy {k} onto", "required": True}
+            print(generated_svc_yaml)
     return generated_svc_yaml
 
 
-def translate_service_postscripts_to_bk_yaml(all_services_and_pwsh):
+def translate_service_postscripts_to_bk_yaml(service, all_services_and_pwsh):
     # as I compare this to the base_pipeline benedict we have currently
     # I think we need to have all the metadata in the service pipeline
     # otherwise how will we pair the hosts and pwsh with the versions?
@@ -178,10 +182,11 @@ def translate_service_postscripts_to_bk_yaml(all_services_and_pwsh):
     # and iterate over them here
     example_dict = {"text": ":pwsh: Service Foo post config script", "key": "svc-foo-pwsh", "hint": "Provide filename for optional PS1 to run post deploy.", "required": False, "default": "ServiceFooDefault.PS1"}
     for k, v in all_services_and_pwsh.items():
-        keysafe_k = k.replace(" ", "-").lower()
-        option_list = [] # can be a scalar string as csv I bet, no need for a list here
-        generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
-        print(generated_svc_yaml)
+        if k == service:
+            keysafe_k = k.replace(" ", "-").lower()
+            option_list = [] # can be a scalar string as csv I bet, no need for a list here
+            generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
+            print(generated_svc_yaml)
     return generated_svc_yaml
 
 
@@ -203,11 +208,15 @@ def main():
     # most likely an assignment issue?
     # can I operate on just my key, and only translate that?
     # sure I might end up calling translate_ fn more often but I just want the one service I'm doing
+    # fixed that one, new problem is now I have every other service's yaml
+    # under `'service-web'` key for the master_input_dict XD :lolsob:
     for service in master_input_dict:
         master_input_dict[service] = []
-        master_input_dict[service].append(translate_service_versions_to_bk_yaml(version_dict_of_all_svcs))
-        master_input_dict[service].append(translate_service_hosts_to_bk_yaml(host_dict_of_all_svcs))
-        # master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(post_dict_of_all_svcs))
+        # so I am passing service as a param, could I not just pass the value of the version_dict_of_all_svcs that was the key I want, like version_dict_of_all_svcs[service] and similarly achieve the same limiting I want?
+        print(f"Generating master_input_dict for {service}, version_dict_of_all_svcs is: {version_dict_of_all_svcs}") # it is NOT duplicated here, versions are ok
+        master_input_dict[service].append(translate_service_versions_to_bk_yaml(service, version_dict_of_all_svcs))
+        master_input_dict[service].append(translate_service_hosts_to_bk_yaml(service, host_dict_of_all_svcs))
+        # master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(service, post_dict_of_all_svcs))
     # translate_service_versions_to_bk_yaml(dict_of_all_svcs)
     print(f"Master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline)
