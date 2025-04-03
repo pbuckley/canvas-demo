@@ -52,7 +52,7 @@ def get_release_versions_from_metadata(svc_name, full_metadata, svc_dict, svc_bu
     return svc_dict
 
 
-def get_hosts_from_metadata(svc_name, full_metadata, svc_dict, svc_hosts_set):
+def get_hosts_from_metadata(svc_name, full_metadata, host_dict, svc_hosts_set):
     hosts_md_name = "deploy-hosts"
 
     if full_metadata.get(hosts_md_name) is not None:
@@ -61,22 +61,22 @@ def get_hosts_from_metadata(svc_name, full_metadata, svc_dict, svc_hosts_set):
         print(f"{svc_name} has svc_hosts as a list: {svc_hosts}")
         svc_hosts_set.update(svc_hosts)
         print(f"Found a {svc_name} host list: {svc_hosts}")
-        svc_dict[svc_name] = sorted(svc_hosts_set)
+        host_dict[svc_name] = sorted(svc_hosts_set)
 
-    return svc_dict
+    return host_dict
 
 
-def get_postscript_from_metadata(svc_name, full_metadata, svc_dict, svc_postscript):
-    postscript_md_name = "deploy-postscript"
+def get_postscript_from_metadata(svc_name, full_metadata, post_dict, svc_postscript):
+    postscript_md_name = "deploy-post-script"
 
     if full_metadata.get(postscript_md_name) is not None:
         print(f"Full metadata for {svc_name}: {full_metadata}")
         postscript = full_metadata[postscript_md_name]
         print(f"Found a {svc_name} postscript: {postscript}")
         svc_postscript.add(postscript)
-        svc_dict[svc_name] = sorted(svc_postscript)
+        post_dict[svc_name] = sorted(svc_postscript)
 
-    return svc_dict
+    return post_dict
 
 
 def get_release_versions(api_token, org_name, deployable_service_pipelines):
@@ -100,6 +100,8 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
     # but right now we're distilling into a dict of the {service-name: [<release versions>], ...}
 
     svc_dict = {}
+    host_dict = {}
+    post_dict = {}
     for pipeline_details in deployable_service_pipelines:
         build_request = Request(pipeline_details['url'] + "/builds")
         build_request.add_header('Authorization', "Bearer " + api_token)
@@ -125,9 +127,9 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
             for build_details in one_build_json:
                 # do not like that I am assigning over and over to svc_dict here but it works?
                 svc_dict = get_release_versions_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_build_versions)
-                svc_dict = get_hosts_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_hosts_set)
-                svc_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_postscript)
-    return svc_dict
+                host_dict = get_hosts_from_metadata(svc_name, build_details['meta_data'], host_dict, svc_hosts_set)
+                post_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], post_dict, svc_postscript)
+    return svc_dict, host_dict, post_dict
 
 
 # obvi these translate fns have a lot in common, could be refactored in the future
@@ -144,7 +146,8 @@ def translate_service_versions_to_bk_yaml(all_services_and_versions):
         for ver in v:
             option_list.append({"label": ver, "value": ver})
         generated_svc_yaml = {"select": f"{k} version", "key": f"{keysafe_k}-ver", "options": option_list}
-        print(generated_svc_yaml)
+        print(f"{k} generated yaml is: {generated_svc_yaml}")
+    return generated_svc_yaml
 
 
 def translate_service_hosts_to_bk_yaml(all_services_and_hosts):
@@ -154,17 +157,19 @@ def translate_service_hosts_to_bk_yaml(all_services_and_hosts):
     # I think it will be too brittle to shoehorn just the versions in there
     # we need to take "everything" for each of our fields - one for each service -
     # and iterate over them here
+    incoming_dict = {'service-web': ['websrv10', 'websrv13', 'websrv15', 'websrv78', 'websrv9'], 'Bar Service': ['filesrv06', 'filesrv18', 'iis_server02', 'iis_server32', 'iis_srv12', 'iis_srv25'], 'Foo App': ['appsrv01', 'appsrv02', 'appsrv03', 'appsrv04', 'appsrv05', 'appsrv06']}
     example_dict = {"text": ":windows: Service Foo Host List", "key": "svc-foo-hosts", "hint": "Comma separated list of hosts to deploy Service Foo onto", "required": True, "default": "iis_server01,iis_server02,iis_server03"}
     # I want to keep the emoji - do I make that metadata, too, or can I go with the pipeline's emoji
     # and grab from one of our existing API calls to reuse it here?
     for k, v in all_services_and_hosts.items():
         keysafe_k = k.replace(" ", "-").lower()
-        option_list = [] # can be a scalar string as csv I bet, no need for a list here
-        generated_svc_yaml = {"text": f"{k} host list", "key": f"{keysafe_k}-hosts", "default": option_list, "hint": f"Comma separated list of hosts to deploy {k} onto", "required": True,}
+        option_list = ",".join(v)
+        generated_svc_yaml = {"text": f"{k} host list", "key": f"{keysafe_k}-hosts", "default": option_list, "hint": f"Comma separated list of hosts to deploy {k} onto", "required": True}
         print(generated_svc_yaml)
+    return generated_svc_yaml
 
 
-def translate_service_pwsh_to_bk_yaml(all_services_and_pwsh):
+def translate_service_postscripts_to_bk_yaml(all_services_and_pwsh):
     # as I compare this to the base_pipeline benedict we have currently
     # I think we need to have all the metadata in the service pipeline
     # otherwise how will we pair the hosts and pwsh with the versions?
@@ -175,8 +180,9 @@ def translate_service_pwsh_to_bk_yaml(all_services_and_pwsh):
     for k, v in all_services_and_pwsh.items():
         keysafe_k = k.replace(" ", "-").lower()
         option_list = [] # can be a scalar string as csv I bet, no need for a list here
-        generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False,}
+        generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
         print(generated_svc_yaml)
+    return generated_svc_yaml
 
 
 def main():
@@ -187,12 +193,23 @@ def main():
 
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
-    dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
-    print(f"Dict of all services: {dict_of_all_svcs}")
-    translate_service_versions_to_bk_yaml(dict_of_all_svcs)
-    # need to implement these, but our service-* pipelines need the metadata present first
-    # translate_service_hosts_to_bk_yaml(dict_of_all_svcs)
-    # translate_service_pwsh_to_bk_yaml(dict_of_all_svcs)
+    version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
+    print(f"Version dict of all services: {version_dict_of_all_svcs}")
+    print(f"Host dict of all services: {host_dict_of_all_svcs}")
+    print(f"Post dict of all services: {post_dict_of_all_svcs}")
+    master_input_dict = {key: [] for key in version_dict_of_all_svcs}
+    # slight problem, each entry of `service-web`, `Bar Service`, and `Foo App` have the versions and hosts from Foo App only
+    # and the first two shouldn't have any of them XD
+    # most likely an assignment issue?
+    # can I operate on just my key, and only translate that?
+    # sure I might end up calling translate_ fn more often but I just want the one service I'm doing
+    for service in master_input_dict:
+        master_input_dict[service] = []
+        master_input_dict[service].append(translate_service_versions_to_bk_yaml(version_dict_of_all_svcs))
+        master_input_dict[service].append(translate_service_hosts_to_bk_yaml(host_dict_of_all_svcs))
+        # master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(post_dict_of_all_svcs))
+    # translate_service_versions_to_bk_yaml(dict_of_all_svcs)
+    print(f"Master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline)
     print("made it to end of main fn")
 
