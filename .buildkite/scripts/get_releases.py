@@ -11,7 +11,9 @@ from benedict import benedict
 import requests
 
 
-def generate_pipeline(pipeline_dict):
+def generate_pipeline(pipeline_dict, master_input_dict):
+    for service in master_input_dict:
+        pipeline_dict['steps'][0]['fields'].append(master_input_dict[service])
     print("here we generate our pipeline")
     pipeline_dict.to_yaml(filepath='generated_pipeline.yml')
 
@@ -80,25 +82,6 @@ def get_postscript_from_metadata(svc_name, full_metadata, post_dict, svc_postscr
 
 
 def get_release_versions(api_token, org_name, deployable_service_pipelines):
-    # currently, this fn is tailored to release version
-    # what if we generic-ified it, made it just grab the metadata from all the builds
-    # then we return that metadata, and we can take our 3 (or more)
-    # passes over it to translate_service_versions_to_bk_yaml (and hosts, pwsh, etc)
-    # given that this fn collapses rel-ver into a set so we don't have dupes,
-    # would we do the same with the generic version? or would the translation deal with dupes
-    # each in their own way for ver/host/pwsh?
-    # maybe this fn becomes as simple as "get the metadata for all the builds" (a list)
-    # and the 3 translate fns can act on it as they like, dealing with whatever complexity
-    # and differentiation that they need to specific to their demesnes (again ver/host/pwsh)
-    # I think I like this approach of "get_metadata" and dispatch to each type (and their corresponding
-    # complexity) better - that way the get_metadata stays the same no matter how much
-    # we add or change, and the individual translate fns will handle their demesnes
-
-    # ok, all well and good sounding, but the problem is we need to iterate over
-    # multiple builds to collect metadata from them all
-    # so we need a collection/collector (list?) for the metadata
-    # but right now we're distilling into a dict of the {service-name: [<release versions>], ...}
-
     svc_dict = {}
     host_dict = {}
     post_dict = {}
@@ -194,8 +177,7 @@ def main():
     org_name = "demo"
     given_tag = "deployable-svc"
     api_token = fetch_bk_api_token()
-    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': 'get-deploy-inputs', 'fields': [{'select': 'Service Foo version', 'key': 'svc-foo-ver', 'options': [{'label': '1.33', 'value': '1.33'}, {'label': '1.35', 'value': '1.35'}, {'label': '1.38', 'value': '1.38'}]}, {'text': ':windows: Service Foo Host List', 'key': 'svc-foo-hosts', 'hint': 'Comma separated list of hosts to deploy Service Foo onto', 'required': True, 'default': 'iis_server01,iis_server02,iis_server03'}, {'text': ':pwsh: Service Foo post config script', 'key': 'svc-foo-pwsh', 'hint': 'Provide filename for optional PS1 to run post deploy.', 'required': False, 'default': 'ServiceFooDefault.PS1'}, {'select': 'Service Bar version', 'key': 'svc-bar-ver', 'options': [{'label': '2.54', 'value': '2.54'}, {'label': '2.79', 'value': '2.79'}, {'label': '3.01RC', 'value': '3.01RC'}]}, {'text': ':pwsh: Service Bar post config script', 'key': 'svc-bar-pwsh', 'hint': 'Provide filename for optional PS1 to run post deploy.', 'required': False, 'default': 'ServiceBarDefault.PS1'}, {'text': ':windows: Service Bar Host List', 'key': 'svc-bar-hosts', 'hint': 'Comma separated list of hosts to deploy Service Bar onto', 'required': True, 'default': 'file_server01,file_server02,file_server03'}, {'select': 'Service Web version', 'key': 'svc-web-ver', 'options': [{'label': '7.45', 'value': '7.45'}, {'label': '8.19', 'value': '8.19'}, {'label': '8.04a', 'value': '8.04a'}]}, {'text': ':windows: Service Web Host List', 'key': 'svc-web-hosts', 'hint': 'Comma separated list of hosts to deploy Service Web onto', 'required': True, 'default': 'web_server1103,web_server2984,web_server1849'}, {'text': ':pwsh: Service Web post config script', 'key': 'svc-web-pwsh', 'hint': 'Provide filename for optional PS1 to run post deploy.', 'required': False, 'default': 'ServiceWebDefault.PS1'}]}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': 'gen-deploy-inputs', 'depends_on': ['get-deploy-inputs']}], 'queue': 'q1'})
-
+    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': 'get-deploy-inputs', 'fields': []}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': 'gen-deploy-inputs', 'depends_on': ['get-deploy-inputs']}], 'queue': 'q1'})
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
     version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
@@ -203,23 +185,20 @@ def main():
     print(f"Host dict of all services: {host_dict_of_all_svcs}")
     print(f"Post dict of all services: {post_dict_of_all_svcs}")
     master_input_dict = {key: [] for key in version_dict_of_all_svcs}
-    # slight problem, each entry of `service-web`, `Bar Service`, and `Foo App` have the versions and hosts from Foo App only
-    # and the first two shouldn't have any of them XD
-    # most likely an assignment issue?
-    # can I operate on just my key, and only translate that?
-    # sure I might end up calling translate_ fn more often but I just want the one service I'm doing
-    # fixed that one, new problem is now I have every other service's yaml
-    # under `'service-web'` key for the master_input_dict XD :lolsob:
     for service in master_input_dict:
         master_input_dict[service] = []
         # so I am passing service as a param, could I not just pass the value of the version_dict_of_all_svcs that was the key I want, like version_dict_of_all_svcs[service] and similarly achieve the same limiting I want?
-        print(f"Generating master_input_dict for {service}, version_dict_of_all_svcs is: {version_dict_of_all_svcs}") # it is NOT duplicated here, versions are ok
+        print(f"Generating master_input_dict for {service}, version_dict_of_all_svcs is: {version_dict_of_all_svcs}")
         master_input_dict[service].append(translate_service_versions_to_bk_yaml(service, version_dict_of_all_svcs))
         master_input_dict[service].append(translate_service_hosts_to_bk_yaml(service, host_dict_of_all_svcs))
         master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(service, post_dict_of_all_svcs))
+        master_input_dict[service][0] = master_input_dict[service][0][0]
     # translate_service_versions_to_bk_yaml(dict_of_all_svcs)
-    print(f"Master input dict?: {master_input_dict}")
-    generate_pipeline(base_pipeline)
+    print(f"master input dict?: {master_input_dict}")
+    # hacky to do it here, but we need to remove one layer of listification (try it above in an iteration)
+    # master_input_dict['service-web'][0] = master_input_dict['service-web'][0][0]
+    print(f"revised master input dict?: {master_input_dict}")
+    generate_pipeline(base_pipeline, master_input_dict)
     print("made it to end of main fn")
 
 
