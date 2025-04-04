@@ -16,36 +16,39 @@ export SVC_FOO_PWSH=$(buildkite-agent meta-data get "foo-app-pwsh")
 export SVC_BAR_PWSH=$(buildkite-agent meta-data get "bar-service-pwsh")
 export SVC_WEB_PWSH=$(buildkite-agent meta-data get "service-web-pwsh")
 
+
+export DATE_STRING=$(date "+%Y-%m-%d-%H-%M")
+
 export FOO_PRE=$(cat <<FOOPRE
 steps:
   - group: ":rocket: :windows: Service Foo Parallel Deploys"
-    key: "foo_deploys"
+    key: "foo-deploys-${DATE_STRING}"
     steps:
 FOOPRE
 )
 
 export BAR_PRE=$(cat <<BARPRE
   - group: ":rocket: :windows: Service Bar Parallel Deploys"
-    key: "bar_deploys"
+    key: "bar-deploys-${DATE_STRING}"
     steps:
 BARPRE
 )
 
 export WEB_PRE=$(cat <<WEBPRE
   - group: ":rocket: :windows: Service Web Parallel Deploys"
-    key: "web_deploys"
+    key: "web-deploys-${DATE_STRING}"
     steps:
 WEBPRE
 )
 
 export ROLLBACK=$(cat <<ROLLY
   - block: "Rollback / Redeploy ?"
-    key: "rollback-block"
+    key: "rollback-block-${DATE_STRING}"
   - label: ':rewind: Rollback / Redeploy'
-    key: "rollback-redeploy-dynamic"
+    key: "rollback-redeploy-dynamic-${DATE_STRING}"
     command: 'python .buildkite/scripts/get_releases.py'
     depends_on:
-      - "rollback-block"
+      - "rollback-block-${DATE_STRING}"
 ROLLY
 )
 
