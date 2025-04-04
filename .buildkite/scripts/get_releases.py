@@ -12,9 +12,27 @@ import requests
 
 
 def generate_pipeline(pipeline_dict, master_input_dict):
+    # fields is a list of 3 lists, all the select->services
+    # fields[0] is that one list of dicts, with key 'select'
+    # how do I flatten my outer list while keeping the inner ones?
+
+    # join 3 lists into one list? but no I need them to be list of lists
+    templist = []
     for service in master_input_dict:
-        pipeline_dict['steps'][0]['fields'].append(master_input_dict[service])
-    print("here we generate our pipeline")
+        templist += master_input_dict[service]
+    pipeline_dict['steps'][0]['fields'] = templist
+    # for service in master_input_dict:
+    #     print(f"Iterating through with {service}")
+    #     print(f"Fields here is {pipeline_dict['steps'][0]['fields']}")
+    #     print(f"And we append: {master_input_dict[service]}")
+    #     pipeline_dict['steps'][0]['fields'].append(master_input_dict[service])
+    # print(f"here we generate our pipeline: {pipeline_dict}")
+    # print(f"Len of fields: {len(pipeline_dict['steps'][0]['fields'])}")
+    # print(f"Fields is: {pipeline_dict['steps'][0]['fields']}")
+    # print(f"Len of fields[0]: {len(pipeline_dict['steps'][0]['fields'][0])}")
+    # print(f"Fields[0] is: {pipeline_dict['steps'][0]['fields'][0]}")
+    # pipeline_dict['steps'][0]['fields'] = [pipeline_dict['steps'][0]['fields'][0], pipeline_dict['steps'][0]['fields'][1], pipeline_dict['steps'][0]['fields'][2]]
+    print(f"the new pipeline dict?: {pipeline_dict}")
     pipeline_dict.to_yaml(filepath='generated_pipeline.yml')
 
 
@@ -177,7 +195,7 @@ def main():
     org_name = "demo"
     given_tag = "deployable-svc"
     api_token = fetch_bk_api_token()
-    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': 'get-deploy-inputs', 'fields': []}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': 'gen-deploy-inputs', 'depends_on': ['get-deploy-inputs']}], 'queue': 'q1'})
+    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': 'get-deploy-inputs'}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': 'gen-deploy-inputs', 'depends_on': ['get-deploy-inputs']}], 'queue': 'q1'})
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
     version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
