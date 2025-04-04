@@ -38,6 +38,17 @@ export WEB_PRE=$(cat <<WEBPRE
 WEBPRE
 )
 
+export ROLLBACK=$(cat <<ROLLY
+  - block: "Rollback / Redeploy ?"
+    key: "rollback-block"
+  - label: ':rewind: Rollback / Redeploy'
+    key: "rollback-redeploy-dynamic"
+    command: 'python .buildkite/scripts/get_releases.py'
+    depends_on:
+      - "rollback-block"
+ROLLY
+)
+
 export ALL_POST=$(cat <<ALLPOST
 queue: "q1"
 ALLPOST
@@ -116,6 +127,8 @@ WEBBOD
 )
     echo ${WEB_BODY} >> newly_genned_pipeline.yml
 done
+
+echo ${ROLLBACK} >> newly_genned_pipeline.yml
 
 echo ${ALL_POST} >> newly_genned_pipeline.yml
 
