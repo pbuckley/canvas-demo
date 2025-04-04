@@ -2,15 +2,19 @@
 
 IFS=","
 
-export SVC_FOO_VER=$(buildkite-agent meta-data get "svc-foo-ver")
-export SVC_BAR_VER=$(buildkite-agent meta-data get "svc-bar-ver")
-export SVC_WEB_VER=$(buildkite-agent meta-data get "svc-web-ver")
-export SVC_FOO_HOSTS=$(buildkite-agent meta-data get "svc-foo-hosts")
-export SVC_BAR_HOSTS=$(buildkite-agent meta-data get "svc-bar-hosts")
-export SVC_WEB_HOSTS=$(buildkite-agent meta-data get "svc-web-hosts")
-export SVC_FOO_PWSH=$(buildkite-agent meta-data get "svc-foo-pwsh")
-export SVC_BAR_PWSH=$(buildkite-agent meta-data get "svc-bar-pwsh")
-export SVC_WEB_PWSH=$(buildkite-agent meta-data get "svc-web-pwsh")
+# so maybe our initial dynamic pipeline could create an artifact file (.json or somesuch)
+# that contains all the metadata keys that we're using, and we can iterate over
+# them here, which maybe would be better done with python than this simple bash
+
+export SVC_FOO_VER=$(buildkite-agent meta-data get "foo-app-ver")
+export SVC_BAR_VER=$(buildkite-agent meta-data get "bar-service-ver")
+export SVC_WEB_VER=$(buildkite-agent meta-data get "service-web-ver")
+export SVC_FOO_HOSTS=$(buildkite-agent meta-data get "foo-app-hosts")
+export SVC_BAR_HOSTS=$(buildkite-agent meta-data get "bar-service-hosts")
+export SVC_WEB_HOSTS=$(buildkite-agent meta-data get "service-web-hosts")
+export SVC_FOO_PWSH=$(buildkite-agent meta-data get "foo-app-pwsh")
+export SVC_BAR_PWSH=$(buildkite-agent meta-data get "bar-service-pwsh")
+export SVC_WEB_PWSH=$(buildkite-agent meta-data get "service-web-pwsh")
 
 export FOO_PRE=$(cat <<FOOPRE
 steps:
