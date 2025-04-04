@@ -5,7 +5,7 @@
 # which are in fact meta-data on their named pipelines
 
 from urllib.request import Request, urlopen
-from os import getenv, popen
+from os import getenv, popen, system
 import json
 from benedict import benedict
 import requests
@@ -217,6 +217,7 @@ def main():
     # master_input_dict['service-web'][0] = master_input_dict['service-web'][0][0]
     print(f"revised master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline, master_input_dict)
+    system('buildkite-agent pipeline upload generated_pipeline.yml')
     print("made it to end of main fn")
 
 
