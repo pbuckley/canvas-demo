@@ -7,8 +7,19 @@
 from urllib.request import Request, urlopen
 from os import getenv, popen, system
 import json
+import datetime
 from benedict import benedict
 import requests
+
+
+def create_dynamic_step_key(prefix_fragment):
+    '''
+    create a dynamic step key so this dynamic pipeline generator
+    can be run multiple times in the same pipeline
+    we only need to go to the minute, seconds would be overkill?
+    '''
+    now = datetime.datetime.now()
+    return prefix_fragment + '-' + now.strftime("%Y-%m-%d-%H-%M")
 
 
 def generate_pipeline(pipeline_dict, master_input_dict):
@@ -195,7 +206,15 @@ def main():
     org_name = "demo"
     given_tag = "deployable-svc"
     api_token = fetch_bk_api_token()
-    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': 'get-deploy-inputs'}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': 'gen-deploy-inputs', 'depends_on': ['get-deploy-inputs']}], 'queue': 'q1'})
+    # we can use a step key with a date-time dash separated
+    # this will solve our rollback issue
+    # and I can do it all here in python
+    # BUILDKITE_STEP_KEY="foo-app-key-2025-04-04-11-56"
+    input_step_key = create_dynamic_step_key('get-deploy-inputs')
+    deploy_step_key = create_dynamic_step_key('gen-deploy-inputs')
+    print(f"using input_step_key of: {input_step_key}")
+    print(f"using deploy_step_key of: {deploy_step_key}")
+    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
     version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
@@ -217,8 +236,12 @@ def main():
     # master_input_dict['service-web'][0] = master_input_dict['service-web'][0][0]
     print(f"revised master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline, master_input_dict)
-    system('buildkite-agent pipeline upload generated_pipeline.yml')
-    print("made it to end of main fn")
+
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        print("In hosted env, uploading pipeline")
+        system('buildkite-agent pipeline upload generated_pipeline.yml')
+    else:
+        print("Running locally, would have run: buildkite-agent pipeline upload generated_pipeline.yml")
 
 
 if __name__ == "__main__":
