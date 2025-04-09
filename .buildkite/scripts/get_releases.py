@@ -207,7 +207,7 @@ def main():
     deploy_step_key = create_dynamic_step_key('gen-deploy-inputs')
     print(f"using input_step_key of: {input_step_key}")
     print(f"using deploy_step_key of: {deploy_step_key}")
-    base_pipeline = benedict({'steps': [{'input': 'Provide regions, versions, and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
+    base_pipeline = benedict({'steps': [{'input': 'Provide regions, versions, and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.py', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
     version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
