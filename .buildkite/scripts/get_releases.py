@@ -32,18 +32,11 @@ def generate_pipeline(pipeline_dict, master_input_dict):
     for service in master_input_dict:
         templist += master_input_dict[service]
     pipeline_dict['steps'][0]['fields'] = templist
-    # for service in master_input_dict:
-    #     print(f"Iterating through with {service}")
-    #     print(f"Fields here is {pipeline_dict['steps'][0]['fields']}")
-    #     print(f"And we append: {master_input_dict[service]}")
-    #     pipeline_dict['steps'][0]['fields'].append(master_input_dict[service])
-    # print(f"here we generate our pipeline: {pipeline_dict}")
-    # print(f"Len of fields: {len(pipeline_dict['steps'][0]['fields'])}")
-    # print(f"Fields is: {pipeline_dict['steps'][0]['fields']}")
-    # print(f"Len of fields[0]: {len(pipeline_dict['steps'][0]['fields'][0])}")
-    # print(f"Fields[0] is: {pipeline_dict['steps'][0]['fields'][0]}")
-    # pipeline_dict['steps'][0]['fields'] = [pipeline_dict['steps'][0]['fields'][0], pipeline_dict['steps'][0]['fields'][1], pipeline_dict['steps'][0]['fields'][2]]
+    region_step_key = create_dynamic_step_key('region-inputs')
+    regions_dict = {'select': 'Regions for deploy', 'key': region_step_key, 'options': [{'label': 'us-east-1', 'value': 'us-east-1'},{'label': 'us-east-2', 'value': 'us-east-2'}, {'label': 'us-west-1', 'value': 'us-west-1'}, {'label': 'eu-central-1', 'value': 'eu-central-1'}, {'label': 'eu-west-3', 'value': 'eu-west-3'}], 'multiple': 'true'}
     print(f"the new pipeline dict?: {pipeline_dict}")
+    pipeline_dict['steps'][0]['fields'].insert(0, regions_dict)
+    print(f"inserted regions into pipeline dict?: {pipeline_dict}")
     pipeline_dict.to_yaml(filepath='generated_pipeline.yml')
 
 
@@ -214,7 +207,7 @@ def main():
     deploy_step_key = create_dynamic_step_key('gen-deploy-inputs')
     print(f"using input_step_key of: {input_step_key}")
     print(f"using deploy_step_key of: {deploy_step_key}")
-    base_pipeline = benedict({'steps': [{'input': 'Provide versions and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
+    base_pipeline = benedict({'steps': [{'input': 'Provide regions, versions, and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.sh', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
     # print(f"Tagged pipelines: {tagged_pipelines}")
     version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
