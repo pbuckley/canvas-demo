@@ -76,7 +76,7 @@ def create_service_list(svc_name, svc_ver, svc_hosts, svc_pwsh):
 def get_metadata_artifact():
     # org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
     # pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
-    # build_number = getenv("BUILDKITE_BUILD_NUMBER")
+    build_number = getenv("BUILDKITE_BUILD_NUMBER")
     # constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
     # api_token = fetch_bk_api_token()
     # headers = {'Authorization': "Bearer " + api_token}
