@@ -154,7 +154,7 @@ def main():
     # and then to make this more dynamic so it can pick the latest/most-recent/most-successful deploy
     # or all of them and summarize it in to beautiful markdown
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
-    annotation_snippet = [{'block': "Generate Deploy Summary?", 'key': summary_block_key, 'depends_on': [most_recent_deploy_step_key]}, {'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [deploy_summary_key]}]
+    annotation_snippet = [{'block': "Generate Deploy Summary?", 'key': summary_block_key, 'depends_on': [most_recent_deploy_step_key]}, {'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [summary_block_key]}]
 
     rollback_snippet = [{'block': "Rollback / Redeploy ?", 'key': rollback_block_key}, {'label': ':rewind: Rollback / Redeploy', 'key': rollback_redeploy_key, 'command': 'python .buildkite/scripts/get_releases.py', 'depends_on': [rollback_block_key]}]
 
