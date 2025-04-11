@@ -5,6 +5,7 @@ from datetime import datetime
 from benedict import benedict
 import requests
 import re
+import json
 
 
 def fetch_bk_api_token():
@@ -86,24 +87,36 @@ def get_metadata_artifact():
     # # filter to just metadata, and then fuzzy match our region metadata like starts with
     # print(f"Full build meta_data is: {full_build['meta_data']}")
 
-    # but even with all this, I can just download my artifact from this build, amirite? no need for the api here in this fn?
-    # and maybe easier I can use the step ID, do I know that? Or am I stuck sorting for the latest artifact
-    # from most recent generated input step?
-    print(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}")
-    return 'gen-deploy-inputs-2025-04-11-02-46' # need to get this dynamically
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        print("In hosted env, downloading meta-data artifact")
+        # but even with all this, I can just download my artifact from this build, amirite? no need for the api here in this fn?
+        # and maybe easier I can use the step ID, do I know that? Or am I stuck sorting for the latest artifact
+        # from most recent generated input step?
+        print(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}")
+        artifact_downloaded = str.strip(popen(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}").read())
+        print(f"This is the artifact download output: {artifact_downloaded}")
+        # let's do the single case of the artifact now and sort to the most recent, later
+        json_filename = 'json-meta-data-dynamic-tbd.json'
+    else:
+        json_filename = './json-meta-data-sample.json'
+
+    meta_data_json = {}
+    with open(json_filename, 'r') as json_file:
+        meta_data_json = json.load(json_file)
+    return meta_data_json['most-recent-deploy-step-key']
 
 
 def main():
+    # so if we had get_releases.py create an artifact that contained the prefixes
+    # of foo-app and bar-service and service-web (and the new 4th service we discover)
+    # then we could fetch it and generate all of these _ver vars?
+    # um... dummy... can I depend on something from earlier in the pipeline generation not this iteration?
+    most_recent_deploy_step_key = get_metadata_artifact()
+    # if we put it into our artifact, as json, this can be the key from the most recently generated
+    # artifact created by get_releases.py, along with our metadata of the prefixes involved in the input step
+
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, getting dynamic meta-data")
-        # so if we had get_releases.py create an artifact that contained the prefixes
-        # of foo-app and bar-service and service-web (and the new 4th service we discover)
-        # then we could fetch it and generate all of these _ver vars?
-        # um... dummy... can I depend on something from earlier in the pipeline generation not this iteration?
-        most_recent_deploy_step_key = get_metadata_artifact()
-        # if we put it into our artifact, as json, this can be the key from the most recently generated
-        # artifact created by get_releases.py, along with our metadata of the prefixes involved in the input step
-
         # ver is scalar
         svc_foo_ver = str.strip(popen("buildkite-agent meta-data get foo-app-ver").read())
         svc_bar_ver = str.strip(popen("buildkite-agent meta-data get bar-service-ver").read())
@@ -119,7 +132,6 @@ def main():
         svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get bar-service-pwsh").read()).split(",")
         svc_web_pwsh = str.strip(popen("buildkite-agent meta-data get service-web-pwsh").read()).split(",")
     else:
-        most_recent_deploy_step_key = 'gen-deploy-inputs-2025-04-11-02-46' # need to get this dynamically
         # ver is scalar
         svc_foo_ver = '1.234'
         svc_bar_ver = '4.56'
@@ -138,6 +150,9 @@ def main():
     rollback_block_key = create_dynamic_step_key('rollback-block')
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
 
+    # this dependency is wonky, I might actually want a block step prior to it so I can trigger manually
+    # and then to make this more dynamic so it can pick the latest/most-recent/most-successful deploy
+    # or all of them and summarize it in to beautiful markdown
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
     annotation_snippet = [{'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [most_recent_deploy_step_key]}]
 
