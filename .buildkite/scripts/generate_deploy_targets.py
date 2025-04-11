@@ -92,10 +92,11 @@ def get_metadata_artifact():
         # but even with all this, I can just download my artifact from this build, amirite? no need for the api here in this fn?
         # and maybe easier I can use the step ID, do I know that? Or am I stuck sorting for the latest artifact
         # from most recent generated input step?
-        print(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}")
-        artifact_downloaded = str.strip(popen(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}").read())
+        print(f"buildkite-agent artifact download \"json-meta-data*.json\" .")
+        artifact_downloaded = str.strip(popen(f"buildkite-agent artifact download \"json-meta-data*.json\" .").read())
         print(f"This is the artifact download output: {artifact_downloaded}")
         # let's do the single case of the artifact now and sort to the most recent, later
+        # but maybe if I just ls *.json locally with a sort the cream will rise to the top?
         json_filename = 'json-meta-data-dynamic-tbd.json'
     else:
         json_filename = './json-meta-data-sample.json'
