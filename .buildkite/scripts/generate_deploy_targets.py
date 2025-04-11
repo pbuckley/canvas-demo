@@ -5,11 +5,6 @@ import datetime
 from benedict import benedict
 
 
-# so maybe our initial dynamic pipeline could create an artifact file (.json or somesuch)
-# that contains all the metadata keys that we're using, and we can iterate over
-# them here, which maybe would be better done with python than this simple bash
-
-
 def create_dynamic_step_key(prefix_fragment):
     '''
     create a dynamic step key so this dynamic pipeline generator
