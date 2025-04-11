@@ -148,31 +148,16 @@ def main():
 
     rollback_block_key = create_dynamic_step_key('rollback-block')
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
+    summary_block_key = create_dynamic_step_key('summary-block')
 
     # this dependency is wonky, I might actually want a block step prior to it so I can trigger manually
     # and then to make this more dynamic so it can pick the latest/most-recent/most-successful deploy
     # or all of them and summarize it in to beautiful markdown
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
-    annotation_snippet = [{'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [most_recent_deploy_step_key]}]
+    annotation_snippet = [{'block': "Generate Deploy Summary?", 'key': summary_block_key, 'depends_on': [most_recent_deploy_step_key]}, {'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [deploy_summary_key]}]
 
     rollback_snippet = [{'block': "Rollback / Redeploy ?", 'key': rollback_block_key}, {'label': ':rewind: Rollback / Redeploy', 'key': rollback_redeploy_key, 'command': 'python .buildkite/scripts/get_releases.py', 'depends_on': [rollback_block_key]}]
 
-    # is this even needed for debugging anymore?
-    print("All svc vars")
-    print(f"svc_foo_ver: {svc_foo_ver}")
-    print(f"svc_bar_ver: {svc_bar_ver}")
-    print(f"svc_web_ver: {svc_web_ver}")
-    print(f"svc_foo_hosts: {svc_foo_hosts}")
-    print(f"svc_bar_hosts: {svc_bar_hosts}")
-    print(f"svc_web_hosts: {svc_web_hosts}")
-    print(f"svc_foo_pwsh: {svc_foo_pwsh}")
-    print(f"svc_bar_pwsh: {svc_bar_pwsh}")
-    print(f"svc_web_pwsh: {svc_web_pwsh}")
-
-    # region would replace these, it would be the top level group (no nesting of groups?)
-    # when we get the build_url, we have meta_data, and that has regions meta-data like so (\n separated):
-    # region-inputs-2025-04-09-21-19":"eu-central-1\neu-west-3"},
-    # I'm assuming we'll fuzzy match on the metadata because the dtstmp is changing
     deploy_regions = get_deploy_regions()
 
     print(f"Deploy regions: {deploy_regions}")
