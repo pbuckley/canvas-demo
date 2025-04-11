@@ -114,65 +114,44 @@ def main():
     # if we put it into our artifact, as json, this can be the key from the most recently generated
     # artifact created by get_releases.py, along with our metadata of the prefixes involved in the input step
 
+    all_svcs = []
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, getting dynamic meta-data")
-        # ver is scalar
-        svc_foo_ver = str.strip(popen("buildkite-agent meta-data get app-foo-ver").read())
-        svc_bar_ver = str.strip(popen("buildkite-agent meta-data get service-bar-ver").read())
-        svc_web_ver = str.strip(popen("buildkite-agent meta-data get service-web-ver").read())
-
-        # hosts is csv
-        svc_foo_hosts = str.strip(popen("buildkite-agent meta-data get app-foo-hosts").read()).split(",")
-        svc_bar_hosts = str.strip(popen("buildkite-agent meta-data get service-bar-hosts").read()).split(",")
-        svc_web_hosts = str.strip(popen("buildkite-agent meta-data get service-web-hosts").read()).split(",")
-
-        # scripts is csv, too? but I don't like that it is :(
-        svc_foo_pwsh = str.strip(popen("buildkite-agent meta-data get app-foo-pwsh").read()).split(",")
-        svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get service-bar-pwsh").read()).split(",")
-        svc_web_pwsh = str.strip(popen("buildkite-agent meta-data get service-web-pwsh").read()).split(",")
+        for dep_srv in ['app-foo', 'service-bar', 'service-web']:
+            constructed_svc = {
+                'svc_name': dep_srv,
+                'svc_ver': str.strip(popen(f"buildkite-agent meta-data get {dep_srv}-ver").read()),
+                'svc_hosts': str.strip(popen(f"buildkite-agent meta-data get {dep_srv}-hosts").read()).split(","),
+                'svc_pwsh': str.strip(popen(f"buildkite-agent meta-data get {dep_srv}-pwsh").read()).split(",")
+            }
+            all_svcs.append(constructed_svc)
     else:
-        # ver is scalar
-        svc_foo_ver = '1.234'
-        svc_bar_ver = '4.56'
-        svc_web_ver = '7.89a'
-
-        # hosts is csv
-        svc_foo_hosts = 'appsrv01,appsrv02,appsrv03'.split(",")
-        svc_bar_hosts = 'filesrv06,filesrv18'.split(",")
-        svc_web_hosts = 'websrv10,websrv13,websrv15'.split(",")
-
-        # scripts is csv, too? but I don't like that it is :(
-        svc_foo_pwsh = 'FooAppScript.PS1'
-        svc_bar_pwsh = 'BarPostDeploy.sh'
-        svc_web_pwsh = 'webconfig.py'
+        local_dict = {
+            'app-foo': {'svc_name': 'app-foo', 'svc_ver': '1.234', 'svc_hosts': 'appsrv01,appsrv02,appsrv03'.split(","), 'svc_pwsh': 'FooAppScript.PS1'},
+            'service-bar': {'svc_name': 'service-bar', 'svc_ver': '4.56', 'svc_hosts': 'filesrv06,filesrv18'.split(","), 'svc_pwsh': 'BarPostDeploy.sh'},
+            'service-web': {'svc_name': 'service-web', 'svc_ver': '7.89a', 'svc_hosts': 'websrv10,websrv13,websrv15'.split(","), 'svc_pwsh': 'webconfig.py'}
+            }
+        for dep_srv in ['app-foo', 'service-bar', 'service-web']:
+            constructed_svc = {
+                'svc_name': local_dict[dep_srv]['svc_name'],
+                'svc_ver': local_dict[dep_srv]['svc_ver'],
+                'svc_hosts': local_dict[dep_srv]['svc_hosts'],
+                'svc_pwsh': local_dict[dep_srv]['svc_pwsh']
+            }
+            all_svcs.append(constructed_svc)
 
     rollback_block_key = create_dynamic_step_key('rollback-block')
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
+    summary_block_key = create_dynamic_step_key('summary-block')
 
     # this dependency is wonky, I might actually want a block step prior to it so I can trigger manually
     # and then to make this more dynamic so it can pick the latest/most-recent/most-successful deploy
     # or all of them and summarize it in to beautiful markdown
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
-    annotation_snippet = [{'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [most_recent_deploy_step_key]}]
+    annotation_snippet = [{'block': "Generate Deploy Summary?", 'key': summary_block_key, 'depends_on': [most_recent_deploy_step_key]}, {'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [deploy_summary_key]}]
 
     rollback_snippet = [{'block': "Rollback / Redeploy ?", 'key': rollback_block_key}, {'label': ':rewind: Rollback / Redeploy', 'key': rollback_redeploy_key, 'command': 'python .buildkite/scripts/get_releases.py', 'depends_on': [rollback_block_key]}]
 
-    # is this even needed for debugging anymore?
-    print("All svc vars")
-    print(f"svc_foo_ver: {svc_foo_ver}")
-    print(f"svc_bar_ver: {svc_bar_ver}")
-    print(f"svc_web_ver: {svc_web_ver}")
-    print(f"svc_foo_hosts: {svc_foo_hosts}")
-    print(f"svc_bar_hosts: {svc_bar_hosts}")
-    print(f"svc_web_hosts: {svc_web_hosts}")
-    print(f"svc_foo_pwsh: {svc_foo_pwsh}")
-    print(f"svc_bar_pwsh: {svc_bar_pwsh}")
-    print(f"svc_web_pwsh: {svc_web_pwsh}")
-
-    # region would replace these, it would be the top level group (no nesting of groups?)
-    # when we get the build_url, we have meta_data, and that has regions meta-data like so (\n separated):
-    # region-inputs-2025-04-09-21-19":"eu-central-1\neu-west-3"},
-    # I'm assuming we'll fuzzy match on the metadata because the dtstmp is changing
     deploy_regions = get_deploy_regions()
 
     print(f"Deploy regions: {deploy_regions}")
@@ -183,19 +162,28 @@ def main():
         # we are operating in this for block going forward for all logic
         prefix_list.append({'group': f':rocket: :windows: Region {region} Parallel Deploys', 'key': region_step_key, 'steps': []})
 
-    full_foo_hosts = create_service_list("Foo App", svc_foo_ver, svc_foo_hosts, svc_foo_pwsh)
-    full_bar_hosts = create_service_list("Service Bar", svc_bar_ver, svc_bar_hosts, svc_bar_pwsh)
-    full_web_hosts = create_service_list("Service Web", svc_web_ver, svc_web_hosts, svc_web_pwsh)
+    combined_list_of_svcs = []
+    for svc in all_svcs:
+        combined_list_of_svcs.append(create_service_list(svc['svc_name'], svc['svc_ver'], svc['svc_hosts'], svc['svc_pwsh']))
 
     print(f"prefix_list is {prefix_list}")
-    print(f"full_foo_hosts is {full_foo_hosts}")
 
     for prefix in prefix_list:
-        prefix['steps'] = full_foo_hosts + full_bar_hosts + full_web_hosts
+        svc_combo_len = len(combined_list_of_svcs)
+        one_len = len(combined_list_of_svcs[0])
+        two_len = len(combined_list_of_svcs[1])
+        print(f"Getting too much nesting with {svc_combo_len}? {combined_list_of_svcs}")
+        print(f"vs one_len {one_len} {combined_list_of_svcs[0]}")
+        print(f"vs two_len {two_len} {combined_list_of_svcs[1]}")
+        prefix['steps'] = (combined_list_of_svcs)
 
     full_pipeline = benedict({'steps': prefix_list + annotation_snippet + rollback_snippet, 'queue': 'q1'})
 
     full_pipeline.to_yaml(filepath='newly_genned_pipeline.yml')
+
+    # it falls to sed to fixup this pipeline and de-nest the lists
+    sed_results = str.strip(popen("sed -i \'s/- -/-/g\' newly_genned_pipeline").read())
+    print(f"results of sed: {sed_results}")
 
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, uploading pipeline")
