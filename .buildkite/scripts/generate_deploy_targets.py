@@ -97,10 +97,8 @@ def get_metadata_artifact():
         print(f"This is the artifact download output: {artifact_downloaded}")
         # let's do the single case of the artifact now and sort to the most recent, later
         # but maybe if I just ls *.json locally with a sort the cream will rise to the top?
-        json_filename = 'json-meta-data-dynamic-tbd.json'
-    else:
-        json_filename = './json-meta-data-sample.json'
 
+    json_filename = str.strip(popen(f"ls -1 json-meta-data-*.json | sort -r | head -1").read())
     meta_data_json = {}
     with open(json_filename, 'r') as json_file:
         meta_data_json = json.load(json_file)
