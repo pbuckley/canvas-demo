@@ -6,6 +6,7 @@ from benedict import benedict
 import requests
 import re
 
+
 def fetch_bk_api_token():
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, fetching bk api token from secret")
@@ -62,6 +63,14 @@ def get_deploy_regions():
     regions_string = get_most_recent_region_key(full_build['meta_data'])
     print(f"We found regions_string {regions_string}")
     return full_build['meta_data'][regions_string].split('\n')
+
+
+def create_service_list(svc_name, svc_ver, svc_hosts, svc_pwsh):
+    full_hosts_list = []
+    for svc_host in svc_hosts:
+        full_hosts_list.insert(0, {'label': f':windows: Deploy {svc_name} {svc_ver} to {svc_host}', 'command': '.buildkite/scripts/run_mock_deploy.sh', 'retry': {'automatic': [{'exit_status': '*', 'limit': '10'}]}})
+        full_hosts_list.insert(1, {'label': f':pwsh: Run {svc_pwsh} for {svc_name} on {svc_host}', 'command': f'echo Running {svc_pwsh} on {svc_host}...'})
+    return full_hosts_list
 
 
 def main():
@@ -132,20 +141,9 @@ def main():
         # we are operating in this for block going forward for all logic
         prefix_list.append({'group': f':rocket: :windows: Region {region} Parallel Deploys', 'key': region_step_key, 'steps': []})
 
-    full_foo_hosts = []
-    for foo_host in svc_foo_hosts:
-        full_foo_hosts.insert(0, {'label': f':windows: Deploy Service Foo {svc_foo_ver} to {foo_host}', 'command': '.buildkite/scripts/run_mock_deploy.sh', 'retry': {'automatic': [{'exit_status': '*', 'limit': '10'}]}})
-        full_foo_hosts.insert(1, {'label': f':pwsh: Run {svc_foo_pwsh} for Foo on {foo_host}', 'command': f'echo Running {svc_foo_pwsh} on {foo_host}...'})
-
-    full_bar_hosts = []
-    for bar_host in svc_bar_hosts:
-        full_bar_hosts.insert(0, {'label': f':windows: Deploy Service Bar {svc_bar_ver} to {bar_host}', 'command': '.buildkite/scripts/run_mock_deploy.sh', 'retry': {'automatic': [{'exit_status': '*', 'limit': '10'}]}})
-        full_bar_hosts.insert(1, {'label': f':pwsh: Run {svc_bar_pwsh} for Bar on {bar_host}', 'command': f'echo Running {svc_bar_pwsh} on {bar_host}...'})
-
-    full_web_hosts = []
-    for web_host in svc_web_hosts:
-        full_web_hosts.insert(0, {'label': f':windows: Deploy Service Web {svc_web_ver} to {web_host}', 'command': '.buildkite/scripts/run_mock_deploy.sh', 'retry': {'automatic': [{'exit_status': '*', 'limit': '10'}]}})
-        full_web_hosts.insert(1, {'label': f':pwsh: Run {svc_web_pwsh} for Web on {web_host}', 'command': f'echo Running {svc_web_pwsh} on {web_host}...'})
+    full_foo_hosts = create_service_list("Foo App", svc_foo_ver, svc_foo_hosts, svc_foo_pwsh)
+    full_bar_hosts = create_service_list("Service Bar", svc_bar_ver, svc_bar_hosts, svc_bar_pwsh)
+    full_web_hosts = create_service_list("Service Web", svc_web_ver, svc_web_hosts, svc_web_pwsh)
 
     print(f"prefix_list is {prefix_list}")
     print(f"full_foo_hosts is {full_foo_hosts}")
