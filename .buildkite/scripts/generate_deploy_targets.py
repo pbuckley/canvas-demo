@@ -119,18 +119,18 @@ def main():
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, getting dynamic meta-data")
         # ver is scalar
-        svc_foo_ver = str.strip(popen("buildkite-agent meta-data get foo-app-ver").read())
-        svc_bar_ver = str.strip(popen("buildkite-agent meta-data get bar-service-ver").read())
+        svc_foo_ver = str.strip(popen("buildkite-agent meta-data get app-foo-ver").read())
+        svc_bar_ver = str.strip(popen("buildkite-agent meta-data get service-bar-ver").read())
         svc_web_ver = str.strip(popen("buildkite-agent meta-data get service-web-ver").read())
 
         # hosts is csv
-        svc_foo_hosts = str.strip(popen("buildkite-agent meta-data get foo-app-hosts").read()).split(",")
-        svc_bar_hosts = str.strip(popen("buildkite-agent meta-data get bar-service-hosts").read()).split(",")
+        svc_foo_hosts = str.strip(popen("buildkite-agent meta-data get app-foo-hosts").read()).split(",")
+        svc_bar_hosts = str.strip(popen("buildkite-agent meta-data get service-bar-hosts").read()).split(",")
         svc_web_hosts = str.strip(popen("buildkite-agent meta-data get service-web-hosts").read()).split(",")
 
         # scripts is csv, too? but I don't like that it is :(
-        svc_foo_pwsh = str.strip(popen("buildkite-agent meta-data get foo-app-pwsh").read()).split(",")
-        svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get bar-service-pwsh").read()).split(",")
+        svc_foo_pwsh = str.strip(popen("buildkite-agent meta-data get app-foo-pwsh").read()).split(",")
+        svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get service-bar-pwsh").read()).split(",")
         svc_web_pwsh = str.strip(popen("buildkite-agent meta-data get service-web-pwsh").read()).split(",")
     else:
         # ver is scalar
