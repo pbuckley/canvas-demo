@@ -73,9 +73,37 @@ def create_service_list(svc_name, svc_ver, svc_hosts, svc_pwsh):
     return full_hosts_list
 
 
+def get_metadata_artifact():
+    # org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
+    # pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
+    # build_number = getenv("BUILDKITE_BUILD_NUMBER")
+    # constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
+    # api_token = fetch_bk_api_token()
+    # headers = {'Authorization': "Bearer " + api_token}
+    # print(f"Getting regions from meta_data in {constructed_url}")
+    # r = requests.get(constructed_url, headers=headers)
+    # full_build = r.json()
+    # # filter to just metadata, and then fuzzy match our region metadata like starts with
+    # print(f"Full build meta_data is: {full_build['meta_data']}")
+
+    # but even with all this, I can just download my artifact from this build, amirite? no need for the api here in this fn?
+    # and maybe easier I can use the step ID, do I know that? Or am I stuck sorting for the latest artifact
+    # from most recent generated input step?
+    print(f"buildkite-agent artifact download \"json-meta-data*.json\" . --build {build_number}")
+    return 'gen-deploy-inputs-2025-04-11-02-46' # need to get this dynamically
+
+
 def main():
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, getting dynamic meta-data")
+        # so if we had get_releases.py create an artifact that contained the prefixes
+        # of foo-app and bar-service and service-web (and the new 4th service we discover)
+        # then we could fetch it and generate all of these _ver vars?
+        # um... dummy... can I depend on something from earlier in the pipeline generation not this iteration?
+        most_recent_deploy_step_key = get_metadata_artifact()
+        # if we put it into our artifact, as json, this can be the key from the most recently generated
+        # artifact created by get_releases.py, along with our metadata of the prefixes involved in the input step
+
         # ver is scalar
         svc_foo_ver = str.strip(popen("buildkite-agent meta-data get foo-app-ver").read())
         svc_bar_ver = str.strip(popen("buildkite-agent meta-data get bar-service-ver").read())
@@ -91,6 +119,7 @@ def main():
         svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get bar-service-pwsh").read()).split(",")
         svc_web_pwsh = str.strip(popen("buildkite-agent meta-data get service-web-pwsh").read()).split(",")
     else:
+        most_recent_deploy_step_key = 'gen-deploy-inputs-2025-04-11-02-46' # need to get this dynamically
         # ver is scalar
         svc_foo_ver = '1.234'
         svc_bar_ver = '4.56'
@@ -106,12 +135,11 @@ def main():
         svc_bar_pwsh = 'BarPostDeploy.sh'
         svc_web_pwsh = 'webconfig.py'
 
-    foo_step_key = create_dynamic_step_key('foo-deploys')
-    bar_step_key = create_dynamic_step_key('bar-deploys')
-    web_step_key = create_dynamic_step_key('web-deploys')
-
     rollback_block_key = create_dynamic_step_key('rollback-block')
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
+
+    deploy_summary_key = create_dynamic_step_key('deploy-summary')
+    annotation_snippet = [{'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [most_recent_deploy_step_key]}]
 
     rollback_snippet = [{'block': "Rollback / Redeploy ?", 'key': rollback_block_key}, {'label': ':rewind: Rollback / Redeploy', 'key': rollback_redeploy_key, 'command': 'python .buildkite/scripts/get_releases.py', 'depends_on': [rollback_block_key]}]
 
@@ -151,7 +179,7 @@ def main():
     for prefix in prefix_list:
         prefix['steps'] = full_foo_hosts + full_bar_hosts + full_web_hosts
 
-    full_pipeline = benedict({'steps': prefix_list + rollback_snippet, 'queue': 'q1'})
+    full_pipeline = benedict({'steps': prefix_list + annotation_snippet + rollback_snippet, 'queue': 'q1'})
 
     full_pipeline.to_yaml(filepath='newly_genned_pipeline.yml')
 

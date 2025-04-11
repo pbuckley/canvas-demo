@@ -165,8 +165,6 @@ def translate_service_hosts_to_bk_yaml(service, all_services_and_hosts):
     # I think it will be too brittle to shoehorn just the versions in there
     # we need to take "everything" for each of our fields - one for each service -
     # and iterate over them here
-    incoming_dict = {'service-web': ['websrv10', 'websrv13', 'websrv15', 'websrv78', 'websrv9'], 'Bar Service': ['filesrv06', 'filesrv18', 'iis_server02', 'iis_server32', 'iis_srv12', 'iis_srv25'], 'Foo App': ['appsrv01', 'appsrv02', 'appsrv03', 'appsrv04', 'appsrv05', 'appsrv06']}
-    example_dict = {"text": ":windows: Service Foo Host List", "key": "svc-foo-hosts", "hint": "Comma separated list of hosts to deploy Service Foo onto", "required": True, "default": "iis_server01,iis_server02,iis_server03"}
     # I want to keep the emoji - do I make that metadata, too, or can I go with the pipeline's emoji
     # and grab from one of our existing API calls to reuse it here?
     for k, v in all_services_and_hosts.items():
@@ -185,7 +183,6 @@ def translate_service_postscripts_to_bk_yaml(service, all_services_and_pwsh):
     # I think it will be too brittle to shoehorn just the versions in there
     # we need to take "everything" for each of our fields - one for each service -
     # and iterate over them here
-    example_dict = {"text": ":pwsh: Service Foo post config script", "key": "svc-foo-pwsh", "hint": "Provide filename for optional PS1 to run post deploy.", "required": False, "default": "ServiceFooDefault.PS1"}
     for k, v in all_services_and_pwsh.items():
         if k == service:
             keysafe_k = k.replace(" ", "-").lower()
@@ -193,6 +190,20 @@ def translate_service_postscripts_to_bk_yaml(service, all_services_and_pwsh):
             generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
             print(generated_svc_yaml)
     return generated_svc_yaml
+
+
+def create_metadata_artifact(deploy_step_key, master_service_dict):
+    # create a json metadata artifact like:
+    # {"version-prefixes": ["foo-app", "bar-service", "service-web"], "most-recent-deploy-step-key": deploy_step_key }
+    json_filename = create_dynamic_step_key('json-meta-data') + '.json'
+    meta_data_dict = {"version-prefixes": list(master_service_dict.keys()), "most-recent-deploy-step-key": deploy_step_key}
+    print(f"meta_data_dict: {meta_data_dict}")
+    with open(json_filename, 'w') as json_file:
+        json.dump(meta_data_dict, json_file, indent=4)
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        print(f"In hosted env, uploading artifact {json_filename}")
+        artifact_uploaded = str.strip(popen(f"buildkite-agent artifact upload {json_filename}").read())
+        print(f"Artifact uploaded: {artifact_uploaded}")
 
 
 def main():
@@ -229,6 +240,8 @@ def main():
     # master_input_dict['service-web'][0] = master_input_dict['service-web'][0][0]
     print(f"revised master input dict?: {master_input_dict}")
     generate_pipeline(base_pipeline, master_input_dict)
+
+    create_metadata_artifact(deploy_step_key, master_input_dict)
 
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, uploading pipeline")
