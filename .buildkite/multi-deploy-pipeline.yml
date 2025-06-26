@@ -1,0 +1,4 @@
+steps:
+  - label: 'generate input step dynamically'
+    command: 'python .buildkite/scripts/get_releases.py'
+queue: 'q1'
