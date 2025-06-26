@@ -67,11 +67,12 @@ def get_tagged_pipelines(api_token, org_name, given_tag):
 def get_release_versions_from_metadata(svc_name, full_metadata, svc_dict, svc_build_versions):
     release_version_md_name = "rel-ver" # I want to prefix with deploy- eventually so deploy-rel-ver
 
-    print(f"Full metadata for {svc_name}: {full_metadata}")
-    release_version = full_metadata[release_version_md_name]
-    print(f"Found a {svc_name} release version: {release_version}")
-    svc_build_versions.add(release_version)
-    svc_dict[svc_name] = sorted(svc_build_versions)
+    if full_metadata.get(release_version_md_name) is not None:
+        print(f"Full metadata for {svc_name}: {full_metadata}")
+        release_version = full_metadata[release_version_md_name]
+        print(f"Found a {svc_name} release version: {release_version}")
+        svc_build_versions.add(release_version)
+        svc_dict[svc_name] = sorted(svc_build_versions)
 
     return svc_dict
 
