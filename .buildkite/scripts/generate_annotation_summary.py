@@ -114,11 +114,19 @@ def get_pipeline_progress(build_data):
     running_jobs = 0
     failed_jobs = 0
 
+    print(f"\n=== DEBUG: Pipeline Progress Calculation ===")
+
     for job in build_data.get('jobs', []):
+        job_name = job.get('name', 'Unknown Job')
+        job_state = job.get('state', 'unknown')
+        job_type = job.get('type', 'unknown')
+        job_id = job.get('id', 'unknown')
+
         # Only count script jobs (actual deployment work)
         if job.get('type') == 'script':
             total_jobs += 1
-            job_state = job.get('state', 'unknown')
+
+            print(f"Script job '{job_name}' (ID: {job_id}): state={job_state}")
 
             if job_state in ['passed', 'failed', 'canceled', 'skipped']:
                 completed_jobs += 1
@@ -128,6 +136,10 @@ def get_pipeline_progress(build_data):
                 running_jobs += 1
 
     progress_percent = (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
+
+    print(f"Pipeline progress: {completed_jobs}/{total_jobs} = {progress_percent:.1f}%")
+    print(f"Running jobs: {running_jobs}")
+    print(f"Failed jobs: {failed_jobs}")
 
     return {
         'total_jobs': total_jobs,
