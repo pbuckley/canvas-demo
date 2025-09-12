@@ -23,20 +23,35 @@ def create_dynamic_step_key(prefix_fragment):
 
 
 def generate_pipeline(pipeline_dict, master_input_dict):
-    # fields is a list of 3 lists, all the select->services
-    # fields[0] is that one list of dicts, with key 'select'
-    # how do I flatten my outer list while keeping the inner ones?
+    """
+    Generate the dynamic pipeline YAML with all discovered services.
+    Now fully dynamic - no hardcoded service limits.
+    """
+    # Flatten all service fields into one list for the input step
+    all_fields = []
+    for service_name, service_fields in master_input_dict.items():
+        all_fields.extend(service_fields)
 
-    # join 3 lists into one list? but no I need them to be list of lists
-    templist = []
-    for service in master_input_dict:
-        templist += master_input_dict[service]
-    pipeline_dict['steps'][0]['fields'] = templist
+    # Set the flattened fields
+    pipeline_dict['steps'][0]['fields'] = all_fields
+
+    # Add regions selection at the beginning
     region_step_key = create_dynamic_step_key('region-inputs')
-    regions_dict = {'select': 'Regions for deploy', 'key': region_step_key, 'options': [{'label': 'us-east-1', 'value': 'us-east-1'},{'label': 'us-east-2', 'value': 'us-east-2'}, {'label': 'us-west-1', 'value': 'us-west-1'}, {'label': 'eu-central-1', 'value': 'eu-central-1'}, {'label': 'eu-west-3', 'value': 'eu-west-3'}], 'multiple': 'true'}
-    print(f"the new pipeline dict?: {pipeline_dict}")
+    regions_dict = {
+        'select': 'Regions for deploy',
+        'key': region_step_key,
+        'options': [
+            {'label': 'us-east-1', 'value': 'us-east-1'},
+            {'label': 'us-east-2', 'value': 'us-east-2'},
+            {'label': 'us-west-1', 'value': 'us-west-1'},
+            {'label': 'eu-central-1', 'value': 'eu-central-1'},
+            {'label': 'eu-west-3', 'value': 'eu-west-3'}
+        ],
+        'multiple': 'true'
+    }
+
     pipeline_dict['steps'][0]['fields'].insert(0, regions_dict)
-    print(f"inserted regions into pipeline dict?: {pipeline_dict}")
+    print(f"Generated pipeline with {len(master_input_dict)} services and {len(all_fields)} total fields")
     pipeline_dict.to_yaml(filepath='generated_pipeline.yml')
 
 
@@ -51,199 +66,298 @@ def fetch_bk_api_token():
 
 def get_tagged_pipelines(api_token, org_name, given_tag):
     '''
-    get all pipelines with a given tag, e.g. deployable-svc
-    this way, the pipelines do not even need to follow a naming convention
-    given_tag: a string with a valid tag
+    Get all pipelines with a given tag, e.g. deployable-svc
+    Enhanced with pagination support for organizations with many pipelines
     '''
-    print(f"Getting pipelines containing {given_tag}")
-    # I want to support pagination but `demo` org only has 30 pipelines, under the default single page limit
+    print(f"Getting pipelines containing tag: {given_tag}")
     headers = {'Authorization': "Bearer " + api_token}
-    r = requests.get(f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines", headers=headers)
-    full_list = r.json()
-    filtered_list = [item for item in full_list if item.get('tags') and given_tag in item['tags']]
+
+    # Support pagination - Buildkite API returns 30 items per page by default
+    all_pipelines = []
+    page = 1
+    per_page = 100  # Max allowed per page
+
+    while True:
+        params = {'page': page, 'per_page': per_page}
+        r = requests.get(
+            f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines",
+            headers=headers,
+            params=params
+        )
+        r.raise_for_status()  # Raise exception for bad status codes
+
+        pipelines_batch = r.json()
+        if not pipelines_batch:  # No more results
+            break
+
+        all_pipelines.extend(pipelines_batch)
+        print(f"Fetched page {page}: {len(pipelines_batch)} pipelines")
+
+        # If we got fewer than per_page, we're done
+        if len(pipelines_batch) < per_page:
+            break
+
+        page += 1
+
+    # Filter for pipelines with the specified tag
+    filtered_list = [
+        pipeline for pipeline in all_pipelines
+        if pipeline.get('tags') and given_tag in pipeline['tags']
+    ]
+
+    print(f"Found {len(filtered_list)} pipelines with tag '{given_tag}' out of {len(all_pipelines)} total pipelines")
     return filtered_list
 
 
-def get_release_versions_from_metadata(svc_name, full_metadata, svc_dict, svc_build_versions):
-    release_version_md_name = "rel-ver" # I want to prefix with deploy- eventually so deploy-rel-ver
+def extract_metadata_from_builds(svc_name, builds_json, metadata_extractors):
+    """
+    Generic metadata extractor that handles all metadata types.
+    Uses a dictionary of extractor functions for different metadata types.
 
-    if full_metadata.get(release_version_md_name) is not None:
-        print(f"Full metadata for {svc_name}: {full_metadata}")
-        release_version = full_metadata[release_version_md_name]
-        print(f"Found a {svc_name} release version: {release_version}")
-        svc_build_versions.add(release_version)
-        svc_dict[svc_name] = sorted(svc_build_versions)
+    Args:
+        svc_name: Service name
+        builds_json: List of build data from API
+        metadata_extractors: Dict of {metadata_name: (set_to_update, dict_to_update)}
 
-    return svc_dict
+    Returns:
+        Dict of extracted metadata organized by type
+    """
+    results = {}
 
+    for build_details in builds_json:
+        metadata = build_details.get('meta_data', {})
 
-def get_hosts_from_metadata(svc_name, full_metadata, host_dict, svc_hosts_set):
-    hosts_md_name = "deploy-hosts"
+        for metadata_key, (data_set, result_dict) in metadata_extractors.items():
+            if metadata_key in metadata:
+                value = metadata[metadata_key]
+                print(f"Found {metadata_key} for {svc_name}: {value}")
 
-    if full_metadata.get(hosts_md_name) is not None:
-        print(f"Full metadata for {svc_name}: {full_metadata}")
-        svc_hosts = [host.strip() for host in full_metadata[hosts_md_name].split(",")]
-        print(f"{svc_name} has svc_hosts as a list: {svc_hosts}")
-        svc_hosts_set.update(svc_hosts)
-        print(f"Found a {svc_name} host list: {svc_hosts}")
-        host_dict[svc_name] = sorted(svc_hosts_set)
+                if metadata_key == "rel-ver":
+                    data_set.add(value)
+                    result_dict[svc_name] = sorted(data_set)
+                elif metadata_key == "deploy-hosts":
+                    hosts = [host.strip() for host in value.split(",")]
+                    data_set.update(hosts)
+                    result_dict[svc_name] = sorted(data_set)
+                elif metadata_key == "deploy-post-script":
+                    data_set.add(value)
+                    result_dict[svc_name] = sorted(data_set)
 
-    return host_dict
-
-
-def get_postscript_from_metadata(svc_name, full_metadata, post_dict, svc_postscript):
-    postscript_md_name = "deploy-post-script"
-
-    if full_metadata.get(postscript_md_name) is not None:
-        print(f"Full metadata for {svc_name}: {full_metadata}")
-        postscript = full_metadata[postscript_md_name]
-        print(f"Found a {svc_name} postscript: {postscript}")
-        svc_postscript.add(postscript)
-        post_dict[svc_name] = sorted(svc_postscript)
-
-    return post_dict
+    return metadata_extractors
 
 
 def get_release_versions(api_token, org_name, deployable_service_pipelines):
+    """
+    Fetch release metadata for all discovered services.
+    Now completely dynamic - handles any number of services.
+    """
+    # Initialize result dictionaries
     svc_dict = {}
     host_dict = {}
     post_dict = {}
+
+    # Track statistics
+    total_services = len(deployable_service_pipelines)
+    processed_services = 0
+
+    print(f"Processing {total_services} deployable services...")
+
     for pipeline_details in deployable_service_pipelines:
+        svc_name = pipeline_details['name']
+        print(f"\n--- Processing service: {svc_name} ({processed_services + 1}/{total_services}) ---")
+
+        # Get builds for this pipeline
         build_request = Request(pipeline_details['url'] + "/builds")
         build_request.add_header('Authorization', "Bearer " + api_token)
 
-        svc_builds = urlopen(build_request).read()
+        try:
+            svc_builds = urlopen(build_request).read()
+            svc_builds_json = json.loads(svc_builds.decode('utf-8'))
 
-        svc_builds_json = json.loads(svc_builds.decode('utf-8'))
-        # print(f"Our whole svc_builds_json {json.dumps(svc_builds_json)}")
+            if not svc_builds_json:
+                print(f"No builds found for service {svc_name}")
+                continue
 
-        for svc_build in svc_builds_json:
-            svc_name = svc_build['pipeline']['name']
-            svc_url = svc_build['url']
-            print(f"Service of name: {svc_name} has url: {svc_url}")
-            one_build_request = Request(svc_build['url']) # https://buildkite.com/docs/apis/rest-api/builds#get-a-build
-            one_build_request.add_header('Authorization', "Bearer " + api_token)
+            print(f"Found {len(svc_builds_json)} builds for {svc_name}")
 
-            one_build_result = urlopen(build_request).read()
-            one_build_json = json.loads(one_build_result.decode('utf-8'))
-
+            # Initialize sets for this service
             svc_versions_set = set()
             svc_hosts_set = set()
             svc_postscript_set = set()
-            for build_details in one_build_json:
-                # do not like that I am assigning over and over to svc_dict here but it works?
-                svc_dict = get_release_versions_from_metadata(svc_name, build_details['meta_data'], svc_dict, svc_versions_set)
-                host_dict = get_hosts_from_metadata(svc_name, build_details['meta_data'], host_dict, svc_hosts_set)
-                post_dict = get_postscript_from_metadata(svc_name, build_details['meta_data'], post_dict, svc_postscript_set)
+
+            # Setup metadata extractors
+            metadata_extractors = {
+                "rel-ver": (svc_versions_set, svc_dict),
+                "deploy-hosts": (svc_hosts_set, host_dict),
+                "deploy-post-script": (svc_postscript_set, post_dict)
+            }
+
+            # Extract metadata from all builds
+            extract_metadata_from_builds(svc_name, svc_builds_json, metadata_extractors)
+
+            processed_services += 1
+
+        except Exception as e:
+            print(f"Error processing service {svc_name}: {str(e)}")
+            continue
+
+    print(f"\n=== Processing Summary ===")
+    print(f"Services with versions: {len(svc_dict)}")
+    print(f"Services with hosts: {len(host_dict)}")
+    print(f"Services with post-scripts: {len(post_dict)}")
+
     return svc_dict, host_dict, post_dict
 
 
-# obvi these translate fns have a lot in common, could be refactored in the future
-def translate_service_versions_to_bk_yaml(service, all_services_and_versions):
-    # as I compare this to the base_pipeline benedict we have currently
-    # I think we need to have all the metadata in the service pipeline
-    # otherwise how will we pair the hosts and pwsh with the versions?
-    # I think it will be too brittle to shoehorn just the versions in there
-    # we need to take "everything" for each of our fields - one for each service -
-    # and iterate over them here
-    generated_svc_yaml = []
-    for k, v in all_services_and_versions.items():
-        if k == service:
-            keysafe_k = k.replace(" ", "-").lower()
-            option_list = []
-            for ver in v:
-                option_list.append({"label": ver, "value": ver})
-            generated_svc_yaml.append({"select": f"{k} version", "key": f"{keysafe_k}-ver", "options": option_list})
-            # new problem, at this point this contains duplicates, I have 5 'select's!!!
-            print(f"{k} generated yaml is: {generated_svc_yaml}")
-    return generated_svc_yaml
+def create_service_yaml_fields(service_name, version_dict, host_dict, post_dict):
+    """
+    Create all YAML fields for a single service.
+    Consolidates the three separate translate functions into one.
+    """
+    fields = []
+    keysafe_name = service_name.replace(" ", "-").lower()
 
+    # Version selection field
+    if service_name in version_dict:
+        version_options = [
+            {"label": ver, "value": ver}
+            for ver in version_dict[service_name]
+        ]
+        fields.append({
+            "select": f"{service_name} version",
+            "key": f"{keysafe_name}-ver",
+            "options": version_options
+        })
 
-def translate_service_hosts_to_bk_yaml(service, all_services_and_hosts):
-    # as I compare this to the base_pipeline benedict we have currently
-    # I think we need to have all the metadata in the service pipeline
-    # otherwise how will we pair the hosts and pwsh with the versions?
-    # I think it will be too brittle to shoehorn just the versions in there
-    # we need to take "everything" for each of our fields - one for each service -
-    # and iterate over them here
-    # I want to keep the emoji - do I make that metadata, too, or can I go with the pipeline's emoji
-    # and grab from one of our existing API calls to reuse it here?
-    for k, v in all_services_and_hosts.items():
-        if k == service: # only do translation for the one service we are passed as key
-            keysafe_k = k.replace(" ", "-").lower()
-            option_list = ",".join(v)
-            generated_svc_yaml = {"text": f"{k} host list", "key": f"{keysafe_k}-hosts", "default": option_list, "hint": f"Comma separated list of hosts to deploy {k} onto", "required": True}
-            print(generated_svc_yaml)
-    return generated_svc_yaml
+    # Host configuration field
+    if service_name in host_dict:
+        host_list = ",".join(host_dict[service_name])
+        fields.append({
+            "text": f"{service_name} host list",
+            "key": f"{keysafe_name}-hosts",
+            "default": host_list,
+            "hint": f"Comma separated list of hosts to deploy {service_name} onto",
+            "required": True
+        })
 
+    # Post-script field
+    if service_name in post_dict:
+        post_list = ",".join(post_dict[service_name])
+        fields.append({
+            "text": f"{service_name} post config script",
+            "key": f"{keysafe_name}-pwsh",
+            "default": post_list,
+            "hint": "Provide filename for optional PS1 to run post deploy.",
+            "required": False
+        })
 
-def translate_service_postscripts_to_bk_yaml(service, all_services_and_pwsh):
-    # as I compare this to the base_pipeline benedict we have currently
-    # I think we need to have all the metadata in the service pipeline
-    # otherwise how will we pair the hosts and pwsh with the versions?
-    # I think it will be too brittle to shoehorn just the versions in there
-    # we need to take "everything" for each of our fields - one for each service -
-    # and iterate over them here
-    for k, v in all_services_and_pwsh.items():
-        if k == service:
-            keysafe_k = k.replace(" ", "-").lower()
-            option_list = ",".join(v)
-            generated_svc_yaml = {"text": f"{k} post config script", "key": f"{keysafe_k}-pwsh", "default": option_list, "hint": "Provide filename for optional PS1 to run post deploy.", "required": False}
-            print(generated_svc_yaml)
-    return generated_svc_yaml
+    print(f"Created {len(fields)} fields for service: {service_name}")
+    return fields
 
 
 def create_metadata_artifact(deploy_step_key, master_service_dict):
-    # create a json metadata artifact like:
-    # {"version-prefixes": ["foo-app", "bar-service", "service-web"], "most-recent-deploy-step-key": deploy_step_key }
+    """
+    Create a comprehensive metadata artifact with all discovered services.
+    Enhanced to include more useful information for downstream scripts.
+    """
     json_filename = create_dynamic_step_key('json-meta-data') + '.json'
-    meta_data_dict = {"version-prefixes": list(master_service_dict.keys()), "most-recent-deploy-step-key": deploy_step_key}
-    print(f"meta_data_dict: {meta_data_dict}")
+
+    # Create comprehensive metadata
+    service_info = {}
+    for service_name in master_service_dict.keys():
+        keysafe_name = service_name.replace(" ", "-").lower()
+        service_info[service_name] = {
+            "keysafe_name": keysafe_name,
+            "version_key": f"{keysafe_name}-ver",
+            "hosts_key": f"{keysafe_name}-hosts",
+            "postscript_key": f"{keysafe_name}-pwsh"
+        }
+
+    meta_data_dict = {
+        "version-prefixes": list(master_service_dict.keys()),
+        "most-recent-deploy-step-key": deploy_step_key,
+        "service-count": len(master_service_dict),
+        "service-info": service_info,
+        "generation-timestamp": datetime.datetime.now().isoformat()
+    }
+
+    print(f"Creating metadata artifact with {len(master_service_dict)} services")
+
     with open(json_filename, 'w') as json_file:
         json.dump(meta_data_dict, json_file, indent=4)
+
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print(f"In hosted env, uploading artifact {json_filename}")
         artifact_uploaded = str.strip(popen(f"buildkite-agent artifact upload {json_filename}").read())
         print(f"Artifact uploaded: {artifact_uploaded}")
+    else:
+        print(f"Running locally, would upload artifact: {json_filename}")
 
 
 def main():
     org_name = "demo"
     given_tag = "deployable-svc"
     api_token = fetch_bk_api_token()
-    # we can use a step key with a date-time dash separated
-    # this will solve our rollback issue
-    # and I can do it all here in python
-    # BUILDKITE_STEP_KEY="foo-app-key-2025-04-04-11-56"
+
+    # Generate dynamic step keys
     input_step_key = create_dynamic_step_key('get-deploy-inputs')
     deploy_step_key = create_dynamic_step_key('gen-deploy-inputs')
-    print(f"using input_step_key of: {input_step_key}")
-    print(f"using deploy_step_key of: {deploy_step_key}")
-    base_pipeline = benedict({'steps': [{'input': 'Provide regions, versions, and targets for :dotnet: deploy', 'key': input_step_key}, {'label': 'Generate deploy targets :slot_machine:', 'command': '.buildkite/scripts/generate_deploy_targets.py', 'key': deploy_step_key, 'depends_on': [input_step_key]}], 'queue': 'q1'})
+
+    print(f"Using input_step_key: {input_step_key}")
+    print(f"Using deploy_step_key: {deploy_step_key}")
+
+    # Create base pipeline structure
+    base_pipeline = benedict({
+        'steps': [
+            {
+                'input': 'Provide regions, versions, and targets for :dotnet: deploy',
+                'key': input_step_key
+            },
+            {
+                'label': 'Generate deploy targets :slot_machine:',
+                'command': '.buildkite/scripts/generate_deploy_targets.py',
+                'key': deploy_step_key,
+                'depends_on': [input_step_key]
+            }
+        ],
+        'queue': 'q1'
+    })
+
+    # Discover all tagged pipelines
     tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
-    # print(f"Tagged pipelines: {tagged_pipelines}")
-    version_dict_of_all_svcs, host_dict_of_all_svcs, post_dict_of_all_svcs = get_release_versions(api_token, org_name, tagged_pipelines)
-    print(f"Version dict of all services: {version_dict_of_all_svcs}")
-    print(f"Host dict of all services: {host_dict_of_all_svcs}")
-    print(f"Post dict of all services: {post_dict_of_all_svcs}")
-    master_input_dict = {key: [] for key in version_dict_of_all_svcs}
-    for service in master_input_dict:
-        master_input_dict[service] = []
-        # so I am passing service as a param, could I not just pass the value of the version_dict_of_all_svcs that was the key I want, like version_dict_of_all_svcs[service] and similarly achieve the same limiting I want?
-        print(f"Generating master_input_dict for {service}, version_dict_of_all_svcs is: {version_dict_of_all_svcs}")
-        master_input_dict[service].append(translate_service_versions_to_bk_yaml(service, version_dict_of_all_svcs))
-        master_input_dict[service].append(translate_service_hosts_to_bk_yaml(service, host_dict_of_all_svcs))
-        master_input_dict[service].append(translate_service_postscripts_to_bk_yaml(service, post_dict_of_all_svcs))
-        master_input_dict[service][0] = master_input_dict[service][0][0]
-    # translate_service_versions_to_bk_yaml(dict_of_all_svcs)
-    print(f"master input dict?: {master_input_dict}")
-    # hacky to do it here, but we need to remove one layer of listification (try it above in an iteration)
-    # master_input_dict['service-web'][0] = master_input_dict['service-web'][0][0]
-    print(f"revised master input dict?: {master_input_dict}")
+
+    if not tagged_pipelines:
+        print(f"No pipelines found with tag '{given_tag}'. Exiting.")
+        return
+
+    # Extract metadata from all discovered services
+    version_dict, host_dict, post_dict = get_release_versions(api_token, org_name, tagged_pipelines)
+
+    if not version_dict:
+        print("No release versions found for any services. Check your metadata configuration.")
+        return
+
+    print(f"\n=== Final Results ===")
+    print(f"Services with versions: {list(version_dict.keys())}")
+    print(f"Services with hosts: {list(host_dict.keys())}")
+    print(f"Services with post-scripts: {list(post_dict.keys())}")
+
+    # Generate YAML fields for all services dynamically
+    master_input_dict = {}
+    for service_name in version_dict.keys():
+        master_input_dict[service_name] = create_service_yaml_fields(
+            service_name, version_dict, host_dict, post_dict
+        )
+
+    print(f"\nGenerated input configuration for {len(master_input_dict)} services")
+
+    # Generate the final pipeline
     generate_pipeline(base_pipeline, master_input_dict)
 
+    # Create metadata artifact for downstream consumption
     create_metadata_artifact(deploy_step_key, master_input_dict)
 
+    # Upload pipeline
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, uploading pipeline")
         system('buildkite-agent pipeline upload generated_pipeline.yml')

@@ -28,7 +28,7 @@ def create_dynamic_step_key(prefix_fragment):
 
 
 def get_most_recent_region_key(meta_data_dict):
-    # Pattern to match keys with the format region-inputs-YYYY-MM-DD-HH-MM (no seconds!!!)
+    """Pattern to match keys with the format region-inputs-YYYY-MM-DD-HH-MM (no seconds!!!)"""
     pattern = r"region-inputs-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})"
 
     matching_keys = []
@@ -48,160 +48,258 @@ def get_most_recent_region_key(meta_data_dict):
 
 
 def get_deploy_regions():
+    """Fetch the selected deployment regions from build metadata"""
     org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
     pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
     build_number = getenv("BUILDKITE_BUILD_NUMBER")
     constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
     api_token = fetch_bk_api_token()
     headers = {'Authorization': "Bearer " + api_token}
+
     print(f"Getting regions from meta_data in {constructed_url}")
     r = requests.get(constructed_url, headers=headers)
+    r.raise_for_status()
+
     full_build = r.json()
-    # filter to just metadata, and then fuzzy match our region metadata like starts with
-    print(f"Full build meta_data is: {full_build['meta_data']}")
-    # this is hardcoded [0] right now, might have to sort to the most recent later
-    # regions_string = [key for key in full_build['meta_data'].keys() if key.startswith("region-inputs-")][0]
+    print(f"Full build meta_data keys: {list(full_build['meta_data'].keys())}")
+
     regions_string = get_most_recent_region_key(full_build['meta_data'])
-    print(f"We found regions_string {regions_string}")
+    if not regions_string:
+        print("No region metadata found!")
+        return []
+
+    print(f"Found regions_string: {regions_string}")
     return full_build['meta_data'][regions_string].split('\n')
 
 
-def create_service_list(svc_name, svc_ver, svc_hosts, svc_pwsh):
-    full_hosts_list = []
-    for svc_host in svc_hosts:
-        full_hosts_list.insert(0, {'label': f':windows: Deploy {svc_name} {svc_ver} to {svc_host}', 'command': '.buildkite/scripts/run_mock_deploy.sh', 'retry': {'automatic': [{'exit_status': '*', 'limit': '10'}]}})
-        full_hosts_list.insert(1, {'label': f':pwsh: Run {svc_pwsh} for {svc_name} on {svc_host}', 'command': f'echo Running {svc_pwsh} on {svc_host}...'})
-    return full_hosts_list
-
-
 def get_metadata_artifact():
-    # org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
-    # pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
-    build_number = getenv("BUILDKITE_BUILD_NUMBER")
-    # constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
-    # api_token = fetch_bk_api_token()
-    # headers = {'Authorization': "Bearer " + api_token}
-    # print(f"Getting regions from meta_data in {constructed_url}")
-    # r = requests.get(constructed_url, headers=headers)
-    # full_build = r.json()
-    # # filter to just metadata, and then fuzzy match our region metadata like starts with
-    # print(f"Full build meta_data is: {full_build['meta_data']}")
-
+    """
+    Download and parse the metadata artifact created by get_releases.py
+    Returns the most recent deploy step key for dependency tracking
+    """
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, downloading meta-data artifact")
-        # but even with all this, I can just download my artifact from this build, amirite? no need for the api here in this fn?
-        # and maybe easier I can use the step ID, do I know that? Or am I stuck sorting for the latest artifact
-        # from most recent generated input step?
-        print(f"buildkite-agent artifact download \"json-meta-data*.json\" .")
-        artifact_downloaded = str.strip(popen(f"buildkite-agent artifact download \"json-meta-data*.json\" .").read())
-        print(f"This is the artifact download output: {artifact_downloaded}")
-        # let's do the single case of the artifact now and sort to the most recent, later
-        # but maybe if I just ls *.json locally with a sort the cream will rise to the top?
+        artifact_pattern = "json-meta-data*.json"
+        download_cmd = f'buildkite-agent artifact download "{artifact_pattern}" .'
+        print(f"Running: {download_cmd}")
+        artifact_downloaded = str.strip(popen(download_cmd).read())
+        print(f"Artifact download output: {artifact_downloaded}")
+    else:
+        print("Running locally, assuming metadata artifact exists")
 
-    json_filename = str.strip(popen(f"ls -1 json-meta-data-*.json | sort -r | head -1").read())
-    meta_data_json = {}
+    # Get the most recent artifact file
+    json_filename = str.strip(popen("ls -1 json-meta-data-*.json | sort -r | head -1").read())
+
+    if not json_filename:
+        print("ERROR: No metadata artifact found!")
+        return None
+
+    print(f"Using metadata file: {json_filename}")
+
     with open(json_filename, 'r') as json_file:
         meta_data_json = json.load(json_file)
-    return meta_data_json['most-recent-deploy-step-key']
+
+    print(f"Loaded metadata for {meta_data_json.get('service-count', 0)} services")
+    return meta_data_json
+
+
+def get_service_metadata_dynamically(service_info):
+    """
+    Dynamically fetch metadata for all services using the service info from the artifact.
+    Replaces the hardcoded service variable fetching.
+
+    Args:
+        service_info: Dictionary of service information from metadata artifact
+
+    Returns:
+        Dictionary containing all service metadata organized by service name
+    """
+    all_service_data = {}
+
+    for service_name, service_config in service_info.items():
+        keysafe_name = service_config['keysafe_name']
+
+        service_data = {
+            'name': service_name,
+            'keysafe_name': keysafe_name
+        }
+
+        if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+            print(f"Fetching metadata for service: {service_name}")
+
+            # Get version (scalar)
+            version_cmd = f"buildkite-agent meta-data get {service_config['version_key']}"
+            service_data['version'] = str.strip(popen(version_cmd).read())
+
+            # Get hosts (CSV)
+            hosts_cmd = f"buildkite-agent meta-data get {service_config['hosts_key']}"
+            hosts_raw = str.strip(popen(hosts_cmd).read())
+            service_data['hosts'] = hosts_raw.split(",") if hosts_raw else []
+
+            # Get post-scripts (CSV - though ideally this should be a single value)
+            pwsh_cmd = f"buildkite-agent meta-data get {service_config['postscript_key']}"
+            pwsh_raw = str.strip(popen(pwsh_cmd).read())
+            service_data['postscripts'] = pwsh_raw.split(",") if pwsh_raw else []
+
+        else:
+            # Local testing data - generate reasonable defaults
+            print(f"Using local test data for service: {service_name}")
+            service_data['version'] = f"{len(service_name)}.{hash(service_name) % 100}"
+            service_data['hosts'] = [f"{keysafe_name}srv{i:02d}" for i in range(1, 4)]
+            service_data['postscripts'] = [f"{keysafe_name}_post_deploy.ps1"]
+
+        all_service_data[service_name] = service_data
+
+        print(f"Service {service_name}: v{service_data['version']}, "
+              f"{len(service_data['hosts'])} hosts, "
+              f"{len(service_data['postscripts'])} scripts")
+
+    return all_service_data
+
+
+def create_service_deploy_steps(service_data):
+    """
+    Create deployment steps for a single service.
+    Replaces the hardcoded create_service_list function.
+
+    Args:
+        service_data: Dictionary containing service metadata
+
+    Returns:
+        List of deployment step dictionaries
+    """
+    service_name = service_data['name']
+    service_version = service_data['version']
+    service_hosts = service_data['hosts']
+    service_scripts = service_data['postscripts']
+
+    deploy_steps = []
+
+    for host in service_hosts:
+        # Main deployment step
+        deploy_steps.append({
+            'label': f':windows: Deploy {service_name} {service_version} to {host}',
+            'command': '.buildkite/scripts/run_mock_deploy.sh',
+            'retry': {
+                'automatic': [{'exit_status': '*', 'limit': '10'}]
+            }
+        })
+
+        # Post-deployment script step (if scripts exist)
+        if service_scripts and service_scripts[0]:  # Check if there's actually a script
+            script_name = service_scripts[0]  # Use first script for now
+            deploy_steps.append({
+                'label': f':gear: Run {script_name} for {service_name} on {host}',
+                'command': f'echo Running {script_name} on {host}...'
+            })
+
+    return deploy_steps
 
 
 def main():
-    # so if we had get_releases.py create an artifact that contained the prefixes
-    # of foo-app and bar-service and service-web (and the new 4th service we discover)
-    # then we could fetch it and generate all of these _ver vars?
-    # um... dummy... can I depend on something from earlier in the pipeline generation not this iteration?
-    most_recent_deploy_step_key = get_metadata_artifact()
-    # if we put it into our artifact, as json, this can be the key from the most recently generated
-    # artifact created by get_releases.py, along with our metadata of the prefixes involved in the input step
+    print("=== Starting Dynamic Deploy Target Generation ===")
 
-    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
-        print("In hosted env, getting dynamic meta-data")
-        # ver is scalar
-        svc_foo_ver = str.strip(popen("buildkite-agent meta-data get app-foo-ver").read())
-        svc_bar_ver = str.strip(popen("buildkite-agent meta-data get service-bar-ver").read())
-        svc_web_ver = str.strip(popen("buildkite-agent meta-data get service-web-ver").read())
+    # Load metadata artifact to get service information
+    metadata = get_metadata_artifact()
+    if not metadata:
+        print("ERROR: Cannot proceed without metadata artifact")
+        return
 
-        # hosts is csv
-        svc_foo_hosts = str.strip(popen("buildkite-agent meta-data get app-foo-hosts").read()).split(",")
-        svc_bar_hosts = str.strip(popen("buildkite-agent meta-data get service-bar-hosts").read()).split(",")
-        svc_web_hosts = str.strip(popen("buildkite-agent meta-data get service-web-hosts").read()).split(",")
+    most_recent_deploy_step_key = metadata['most-recent-deploy-step-key']
+    service_info = metadata['service-info']
 
-        # scripts is csv, too? but I don't like that it is :(
-        svc_foo_pwsh = str.strip(popen("buildkite-agent meta-data get app-foo-pwsh").read()).split(",")
-        svc_bar_pwsh = str.strip(popen("buildkite-agent meta-data get service-bar-pwsh").read()).split(",")
-        svc_web_pwsh = str.strip(popen("buildkite-agent meta-data get service-web-pwsh").read()).split(",")
-    else:
-        # ver is scalar
-        svc_foo_ver = '1.234'
-        svc_bar_ver = '4.56'
-        svc_web_ver = '7.89a'
+    print(f"Processing {len(service_info)} services...")
 
-        # hosts is csv
-        svc_foo_hosts = 'appsrv01,appsrv02,appsrv03'.split(",")
-        svc_bar_hosts = 'filesrv06,filesrv18'.split(",")
-        svc_web_hosts = 'websrv10,websrv13,websrv15'.split(",")
+    # Dynamically fetch all service metadata
+    all_service_data = get_service_metadata_dynamically(service_info)
 
-        # scripts is csv, too? but I don't like that it is :(
-        svc_foo_pwsh = 'FooAppScript.PS1'
-        svc_bar_pwsh = 'BarPostDeploy.sh'
-        svc_web_pwsh = 'webconfig.py'
+    if not all_service_data:
+        print("ERROR: No service data retrieved")
+        return
 
+    # Get deployment regions
+    deploy_regions = get_deploy_regions()
+    if not deploy_regions:
+        print("ERROR: No deployment regions specified")
+        return
+
+    print(f"Deploying to regions: {deploy_regions}")
+
+    # Create dynamic step keys
     rollback_block_key = create_dynamic_step_key('rollback-block')
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
-
-    # this dependency is wonky, I might actually want a block step prior to it so I can trigger manually
-    # and then to make this more dynamic so it can pick the latest/most-recent/most-successful deploy
-    # or all of them and summarize it in to beautiful markdown
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
-    annotation_snippet = [{'label': ':spiral_note_pad: Generate Deploy Summary', 'key': deploy_summary_key, 'command': 'python .buildkite/scripts/generate_annotation_summary.py', 'depends_on': [most_recent_deploy_step_key]}]
 
-    rollback_snippet = [{'block': "Rollback / Redeploy ?", 'key': rollback_block_key}, {'label': ':rewind: Rollback / Redeploy', 'key': rollback_redeploy_key, 'command': 'python .buildkite/scripts/get_releases.py', 'depends_on': [rollback_block_key]}]
-
-    # is this even needed for debugging anymore?
-    print("All svc vars")
-    print(f"svc_foo_ver: {svc_foo_ver}")
-    print(f"svc_bar_ver: {svc_bar_ver}")
-    print(f"svc_web_ver: {svc_web_ver}")
-    print(f"svc_foo_hosts: {svc_foo_hosts}")
-    print(f"svc_bar_hosts: {svc_bar_hosts}")
-    print(f"svc_web_hosts: {svc_web_hosts}")
-    print(f"svc_foo_pwsh: {svc_foo_pwsh}")
-    print(f"svc_bar_pwsh: {svc_bar_pwsh}")
-    print(f"svc_web_pwsh: {svc_web_pwsh}")
-
-    # region would replace these, it would be the top level group (no nesting of groups?)
-    # when we get the build_url, we have meta_data, and that has regions meta-data like so (\n separated):
-    # region-inputs-2025-04-09-21-19":"eu-central-1\neu-west-3"},
-    # I'm assuming we'll fuzzy match on the metadata because the dtstmp is changing
-    deploy_regions = get_deploy_regions()
-
-    print(f"Deploy regions: {deploy_regions}")
-
-    prefix_list = []
+    # Create region groups
+    region_groups = []
     for region in deploy_regions:
-        region_step_key = create_dynamic_step_key(region + '-step-')
-        # we are operating in this for block going forward for all logic
-        prefix_list.append({'group': f':rocket: :windows: Region {region} Parallel Deploys', 'key': region_step_key, 'steps': []})
+        region_step_key = create_dynamic_step_key(f'{region}-step')
 
-    full_foo_hosts = create_service_list("Foo App", svc_foo_ver, svc_foo_hosts, svc_foo_pwsh)
-    full_bar_hosts = create_service_list("Service Bar", svc_bar_ver, svc_bar_hosts, svc_bar_pwsh)
-    full_web_hosts = create_service_list("Service Web", svc_web_ver, svc_web_hosts, svc_web_pwsh)
+        # Collect all deployment steps for all services in this region
+        all_deploy_steps = []
+        for service_name, service_data in all_service_data.items():
+            service_steps = create_service_deploy_steps(service_data)
+            all_deploy_steps.extend(service_steps)
 
-    print(f"prefix_list is {prefix_list}")
-    print(f"full_foo_hosts is {full_foo_hosts}")
+        region_groups.append({
+            'group': f':rocket: :earth_americas: Region {region} Parallel Deploys',
+            'key': region_step_key,
+            'steps': all_deploy_steps
+        })
 
-    for prefix in prefix_list:
-        prefix['steps'] = full_foo_hosts + full_bar_hosts + full_web_hosts
+    # Create post-deployment steps
+    annotation_snippet = [{
+        'label': ':spiral_note_pad: Generate Deploy Summary',
+        'key': deploy_summary_key,
+        'command': 'python .buildkite/scripts/generate_annotation_summary.py',
+        'depends_on': [most_recent_deploy_step_key]
+    }]
 
-    full_pipeline = benedict({'steps': prefix_list + annotation_snippet + rollback_snippet, 'queue': 'q1'})
+    rollback_snippet = [
+        {
+            'block': "Rollback / Redeploy ?",
+            'key': rollback_block_key
+        },
+        {
+            'label': ':rewind: Rollback / Redeploy',
+            'key': rollback_redeploy_key,
+            'command': 'python .buildkite/scripts/get_releases.py',
+            'depends_on': [rollback_block_key]
+        }
+    ]
 
+    # Debug output
+    print("\n=== Service Configuration Summary ===")
+    for service_name, service_data in all_service_data.items():
+        print(f"{service_name}: v{service_data['version']}")
+        print(f"  Hosts: {', '.join(service_data['hosts'])}")
+        print(f"  Scripts: {', '.join(service_data['postscripts'])}")
+
+    print(f"\n=== Pipeline Structure ===")
+    print(f"Region groups: {len(region_groups)}")
+    total_steps = sum(len(group['steps']) for group in region_groups)
+    print(f"Total deployment steps: {total_steps}")
+
+    # Assemble full pipeline
+    full_pipeline = benedict({
+        'steps': region_groups + annotation_snippet + rollback_snippet,
+        'queue': 'q1'
+    })
+
+    # Generate pipeline file
     full_pipeline.to_yaml(filepath='newly_genned_pipeline.yml')
 
+    # Upload pipeline
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, uploading pipeline")
-        system('buildkite-agent pipeline upload newly_genned_pipeline.yml')
+        result = system('buildkite-agent pipeline upload newly_genned_pipeline.yml')
+        if result == 0:
+            print("Pipeline uploaded successfully!")
+        else:
+            print(f"Pipeline upload failed with exit code: {result}")
     else:
         print("Running locally, would have run: buildkite-agent pipeline upload newly_genned_pipeline.yml")
+        print("Generated pipeline file: newly_genned_pipeline.yml")
 
 
 if __name__ == "__main__":
