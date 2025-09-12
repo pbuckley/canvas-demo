@@ -221,7 +221,7 @@ def parse_deployment_jobs(build_data):
         if job_type != 'script':
             continue
 
-        # Parse deployment jobs using regex patterns
+        # Parse deployment jobs using regex patterns that account for emoji prefixes
         deploy_pattern = r':windows:\s+Deploy\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+([\d\w.-]+)\s+to\s+(\w+)'
         script_pattern = r':gear:\s+Run\s+([\w.-]+)\s+for\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+on\s+(\w+)'
 
