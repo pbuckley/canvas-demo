@@ -82,23 +82,60 @@ def should_stop_monitoring(build_data):
     """
     build_state = build_data.get('state', 'unknown')
 
+    print(f"\n=== DEBUG: Stop Monitoring Check ===")
+    print(f"Build state: {build_state}")
+
     # Stop if build is in terminal state
     if build_state in ['passed', 'failed', 'canceled']:
         return True, f"Build finished with state: {build_state}"
 
-    # Check for rollback block step
+    # Check all jobs for rollback/redeploy block step
+    rollback_jobs = []
+    blocked_jobs = []
+
     for job in build_data.get('jobs', []):
         job_type = job.get('type', '')
         job_state = job.get('state', '')
         job_name = job.get('name', '')
+        job_id = job.get('id', 'unknown')
 
-        # Look for rollback/redeploy block step
-        if (job_type == 'waiter' and
-            ('rollback' in job_name.lower() or 'redeploy' in job_name.lower()) and
-            job_state in ['blocked', 'waiting']):
-            return True, f"Reached rollback decision point: {job_name}"
+        # DEBUG: Log all job states for analysis
+        print(f"Job '{job_name}' (ID: {job_id}): type={job_type}, state={job_state}")
+
+        # Look for any blocked/waiting jobs (could indicate manual intervention needed)
+        if job_state in ['blocked', 'waiting']:
+            blocked_jobs.append({'name': job_name, 'type': job_type, 'state': job_state})
+
+        # Look for rollback/redeploy related jobs
+        job_name_lower = job_name.lower()
+        if ('rollback' in job_name_lower or 'redeploy' in job_name_lower):
+            rollback_jobs.append({'name': job_name, 'type': job_type, 'state': job_state})
+
+        # Check for the specific block step pattern from generate_deploy_targets.py
+        # Looking for jobs with "Rollback / Redeploy" in the name
+        if job_type == 'waiter' and ('rollback' in job_name_lower and 'redeploy' in job_name_lower):
+            print(f"  Found rollback block step: {job_name} (state: {job_state})")
+            if job_state in ['blocked', 'waiting', 'unblocked']:
+                return True, f"Reached rollback decision point: {job_name} ({job_state})"
+
+    # Debug output
+    if rollback_jobs:
+        print(f"Found {len(rollback_jobs)} rollback-related jobs:")
+        for job in rollback_jobs:
+            print(f"  - {job['name']} ({job['type']}, {job['state']})")
+
+    if blocked_jobs:
+        print(f"Found {len(blocked_jobs)} blocked/waiting jobs:")
+        for job in blocked_jobs:
+            print(f"  - {job['name']} ({job['type']}, {job['state']})")
+
+        # If we have any blocked jobs that might be manual intervention, stop
+        for job in blocked_jobs:
+            if job['type'] == 'waiter':
+                return True, f"Manual intervention needed: {job['name']} ({job['state']})"
 
     # Continue monitoring if pipeline is still active
+    print("Pipeline still running, continuing monitoring...")
     return False, "Pipeline still running"
 
 
@@ -248,7 +285,7 @@ def extract_region_from_job(job, build_data):
         if step.get('type') == 'group':
             group_label = step.get('label', '')
             if 'Region' in group_label:
-                region_match = re.search(r'Region (\w+-\w+-\d+)', group_label)
+                region_match = re.search(r'Region\s+([a-z]+-[a-z]+-\d+)', group_label)
                 if region_match:
                     return region_match.group(1)
 
