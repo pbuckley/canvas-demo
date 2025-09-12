@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 from os import getenv, popen, system
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import requests
 import re
+import time
 from collections import defaultdict, Counter
 
 
@@ -34,8 +35,6 @@ def get_current_build_data():
     constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
     api_token = fetch_bk_api_token()
     headers = {'Authorization': "Bearer " + api_token}
-
-    print(f"Fetching build data from: {constructed_url}")
 
     try:
         r = requests.get(constructed_url, headers=headers)
@@ -73,6 +72,73 @@ def get_metadata_artifact():
         return None
 
 
+def should_stop_monitoring(build_data):
+    """
+    Determine if we should stop live monitoring based on pipeline state.
+    Stops when we hit the rollback block step or pipeline is finished/failed.
+
+    Returns:
+        tuple: (should_stop: bool, reason: str)
+    """
+    build_state = build_data.get('state', 'unknown')
+
+    # Stop if build is in terminal state
+    if build_state in ['passed', 'failed', 'canceled']:
+        return True, f"Build finished with state: {build_state}"
+
+    # Check for rollback block step
+    for job in build_data.get('jobs', []):
+        job_type = job.get('type', '')
+        job_state = job.get('state', '')
+        job_name = job.get('name', '')
+
+        # Look for rollback/redeploy block step
+        if (job_type == 'waiter' and
+            ('rollback' in job_name.lower() or 'redeploy' in job_name.lower()) and
+            job_state in ['blocked', 'waiting']):
+            return True, f"Reached rollback decision point: {job_name}"
+
+    # Continue monitoring if pipeline is still active
+    return False, "Pipeline still running"
+
+
+def get_pipeline_progress(build_data):
+    """
+    Calculate overall pipeline progress for the live dashboard.
+
+    Returns:
+        dict: Progress statistics including completion percentage
+    """
+    total_jobs = 0
+    completed_jobs = 0
+    running_jobs = 0
+    failed_jobs = 0
+
+    for job in build_data.get('jobs', []):
+        # Only count script jobs (actual deployment work)
+        if job.get('type') == 'script':
+            total_jobs += 1
+            job_state = job.get('state', 'unknown')
+
+            if job_state in ['passed', 'failed', 'canceled', 'skipped']:
+                completed_jobs += 1
+                if job_state == 'failed':
+                    failed_jobs += 1
+            elif job_state == 'running':
+                running_jobs += 1
+
+    progress_percent = (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
+
+    return {
+        'total_jobs': total_jobs,
+        'completed_jobs': completed_jobs,
+        'running_jobs': running_jobs,
+        'failed_jobs': failed_jobs,
+        'progress_percent': progress_percent,
+        'remaining_jobs': total_jobs - completed_jobs
+    }
+
+
 def parse_deployment_jobs(build_data):
     """
     Parse build jobs to extract deployment information.
@@ -93,7 +159,8 @@ def parse_deployment_jobs(build_data):
         'canceled': '⏹️',
         'skipped': '⏭️',
         'blocked': '🚫',
-        'unblocked': '🔓'
+        'unblocked': '🔓',
+        'waiting': '⏸️'
     }
 
     for job in build_data.get('jobs', []):
@@ -128,7 +195,8 @@ def parse_deployment_jobs(build_data):
                 'job_id': job.get('id', 'unknown'),
                 'started_at': job.get('started_at'),
                 'finished_at': job.get('finished_at'),
-                'exit_status': job.get('exit_status')
+                'exit_status': job.get('exit_status'),
+                'web_url': job.get('web_url', '')
             })
 
         elif script_match:
@@ -144,7 +212,8 @@ def parse_deployment_jobs(build_data):
                 'state': job_state,
                 'emoji': state_emoji.get(job_state, '❓'),
                 'job_id': job.get('id', 'unknown'),
-                'exit_status': job.get('exit_status')
+                'exit_status': job.get('exit_status'),
+                'web_url': job.get('web_url', '')
             })
 
     return deployment_results, post_script_results
@@ -180,9 +249,12 @@ def calculate_deployment_statistics(deployment_results, post_script_results):
         'total_deployments': 0,
         'successful_deployments': 0,
         'failed_deployments': 0,
+        'running_deployments': 0,
+        'pending_deployments': 0,
         'total_post_scripts': 0,
         'successful_post_scripts': 0,
         'failed_post_scripts': 0,
+        'running_post_scripts': 0,
         'regions': set(),
         'hosts': set(),
         'services_by_status': defaultdict(int)
@@ -191,6 +263,9 @@ def calculate_deployment_statistics(deployment_results, post_script_results):
     # Analyze deployment results
     for service_name, regions in deployment_results.items():
         service_success = True
+        service_has_failures = False
+        service_has_running = False
+
         for region, deployments in regions.items():
             stats['regions'].add(region)
             for deployment in deployments:
@@ -201,12 +276,25 @@ def calculate_deployment_statistics(deployment_results, post_script_results):
                     stats['successful_deployments'] += 1
                 elif deployment['state'] == 'failed':
                     stats['failed_deployments'] += 1
+                    service_has_failures = True
+                    service_success = False
+                elif deployment['state'] == 'running':
+                    stats['running_deployments'] += 1
+                    service_has_running = True
+                    service_success = False
+                elif deployment['state'] in ['scheduled', 'waiting']:
+                    stats['pending_deployments'] += 1
                     service_success = False
 
+        # Categorize service status
         if service_success:
-            stats['services_by_status']['successful'] += 1
-        else:
+            stats['services_by_status']['completed'] += 1
+        elif service_has_failures:
             stats['services_by_status']['failed'] += 1
+        elif service_has_running:
+            stats['services_by_status']['running'] += 1
+        else:
+            stats['services_by_status']['pending'] += 1
 
     # Analyze post-script results
     for service_name, regions in post_script_results.items():
@@ -217,6 +305,8 @@ def calculate_deployment_statistics(deployment_results, post_script_results):
                     stats['successful_post_scripts'] += 1
                 elif script['state'] == 'failed':
                     stats['failed_post_scripts'] += 1
+                elif script['state'] == 'running':
+                    stats['running_post_scripts'] += 1
 
     # Convert sets to counts
     stats['total_regions'] = len(stats['regions'])
@@ -225,12 +315,14 @@ def calculate_deployment_statistics(deployment_results, post_script_results):
     return stats
 
 
-def generate_summary_markdown(deployment_results, post_script_results, stats, metadata):
+def generate_live_summary_markdown(deployment_results, post_script_results, stats, metadata, progress, update_count, start_time):
     """
-    Generate a comprehensive markdown summary of the deployment.
-    This is the main "dashboard" that gets displayed as a Buildkite annotation.
+    Generate a live-updating markdown summary of the deployment.
+    This is the main "live dashboard" that gets updated every 10 seconds.
     """
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    current_time = datetime.now()
+    elapsed_time = current_time - start_time
+    timestamp = current_time.strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # Calculate success rate
     if stats['total_deployments'] > 0:
@@ -238,47 +330,55 @@ def generate_summary_markdown(deployment_results, post_script_results, stats, me
     else:
         success_rate = 0
 
-    # Header with overall status
-    if success_rate >= 95:
+    # Dynamic status based on current state
+    if stats['running_deployments'] > 0 or stats['pending_deployments'] > 0:
+        status_emoji = "🚀"
+        status_text = "DEPLOYING"
+    elif success_rate >= 95 and stats['failed_deployments'] == 0:
         status_emoji = "🎉"
-        status_text = "EXCELLENT"
+        status_text = "SUCCESS"
     elif success_rate >= 80:
         status_emoji = "✅"
-        status_text = "GOOD"
+        status_text = "MOSTLY SUCCESS"
     elif success_rate >= 60:
         status_emoji = "⚠️"
-        status_text = "PARTIAL"
+        status_text = "PARTIAL SUCCESS"
     else:
         status_emoji = "❌"
-        status_text = "CRITICAL"
+        status_text = "CRITICAL ISSUES"
 
     markdown = f"""
-# {status_emoji} Deployment Summary - {status_text}
+# {status_emoji} Live Deployment Dashboard - {status_text}
 
-**Generated:** {timestamp}
-**Overall Success Rate:** {success_rate:.1f}% ({stats['successful_deployments']}/{stats['total_deployments']})
-
----
-
-## 📊 Quick Stats
-
-| Metric | Count |
-|--------|--------|
-| Services Deployed | {stats['total_services']} |
-| Total Deployments | {stats['total_deployments']} |
-| Regions | {stats['total_regions']} |
-| Hosts | {stats['total_hosts']} |
-| Post-Scripts | {stats['total_post_scripts']} |
+🔄 **Live Update #{update_count}** | **Last Updated:** {timestamp} | **Runtime:** {str(elapsed_time).split('.')[0]}
 
 ---
 
-## 🚀 Service Deployment Status
+## 📊 Real-Time Progress
+
+**Overall Progress:** {progress['progress_percent']:.1f}% ({progress['completed_jobs']}/{progress['total_jobs']} jobs complete)
+
+| Status | Count | Percentage |
+|--------|--------|------------|
+| ✅ Successful | {stats['successful_deployments']} | {(stats['successful_deployments']/stats['total_deployments']*100) if stats['total_deployments'] > 0 else 0:.1f}% |
+| 🏃 Running | {stats['running_deployments']} | {(stats['running_deployments']/stats['total_deployments']*100) if stats['total_deployments'] > 0 else 0:.1f}% |
+| ⏰ Pending | {stats['pending_deployments']} | {(stats['pending_deployments']/stats['total_deployments']*100) if stats['total_deployments'] > 0 else 0:.1f}% |
+| ❌ Failed | {stats['failed_deployments']} | {(stats['failed_deployments']/stats['total_deployments']*100) if stats['total_deployments'] > 0 else 0:.1f}% |
+
+**Deployment Targets:** {stats['total_services']} services → {stats['total_regions']} regions → {stats['total_hosts']} hosts
+
+---
+
+## 🚀 Service Status Matrix
 """
 
-    # Service-by-service breakdown
+    # Service-by-service live status
     for service_name, regions in sorted(deployment_results.items()):
         service_total = 0
         service_success = 0
+        service_running = 0
+        service_failed = 0
+        service_pending = 0
 
         # Count totals for this service
         for region, deployments in regions.items():
@@ -286,155 +386,251 @@ def generate_summary_markdown(deployment_results, post_script_results, stats, me
                 service_total += 1
                 if deployment['state'] == 'passed':
                     service_success += 1
+                elif deployment['state'] == 'running':
+                    service_running += 1
+                elif deployment['state'] == 'failed':
+                    service_failed += 1
+                elif deployment['state'] in ['scheduled', 'waiting']:
+                    service_pending += 1
 
-        service_rate = (service_success / service_total * 100) if service_total > 0 else 0
-        service_emoji = "✅" if service_rate == 100 else "⚠️" if service_rate > 0 else "❌"
+        # Dynamic service emoji based on current state
+        if service_running > 0:
+            service_emoji = "🏃"
+            service_status = "DEPLOYING"
+        elif service_failed > 0:
+            service_emoji = "❌"
+            service_status = "HAS FAILURES"
+        elif service_pending > 0:
+            service_emoji = "⏰"
+            service_status = "PENDING"
+        elif service_success == service_total:
+            service_emoji = "✅"
+            service_status = "COMPLETE"
+        else:
+            service_emoji = "❓"
+            service_status = "UNKNOWN"
 
-        markdown += f"\n### {service_emoji} {service_name}\n"
-        markdown += f"**Success Rate:** {service_rate:.0f}% ({service_success}/{service_total})\n\n"
+        markdown += f"\n### {service_emoji} {service_name} - {service_status}\n"
 
-        # Region breakdown for this service
+        if service_total > 0:
+            completion = (service_success / service_total * 100)
+            markdown += f"**Progress:** {completion:.0f}% ({service_success}/{service_total}) "
+
+            if service_running > 0:
+                markdown += f"| 🏃 {service_running} deploying "
+            if service_failed > 0:
+                markdown += f"| ❌ {service_failed} failed "
+            if service_pending > 0:
+                markdown += f"| ⏰ {service_pending} pending"
+
+            markdown += "\n\n"
+
+        # Live region breakdown for this service
         for region, deployments in sorted(regions.items()):
             if deployments:
                 version = deployments[0]['version']  # All deployments should be same version
                 markdown += f"**{region.upper()}** (v{version}): "
 
-                # Group by status for cleaner display
+                # Group by status for cleaner display with live indicators
                 status_groups = defaultdict(list)
                 for deployment in deployments:
                     status_groups[deployment['state']].append(deployment['host'])
 
                 status_parts = []
                 for state, hosts in status_groups.items():
-                    emoji = '✅' if state == 'passed' else '❌' if state == 'failed' else '🏃' if state == 'running' else '❓'
+                    if state == 'passed':
+                        emoji = '✅'
+                    elif state == 'failed':
+                        emoji = '❌'
+                    elif state == 'running':
+                        emoji = '🏃'
+                    elif state in ['scheduled', 'waiting']:
+                        emoji = '⏰'
+                    else:
+                        emoji = '❓'
+
                     status_parts.append(f"{emoji} {', '.join(hosts)}")
 
                 markdown += " | ".join(status_parts) + "\n\n"
 
-    # Failures section (if any)
-    failures = []
+    # Current failures section (if any)
+    current_failures = []
     for service_name, regions in deployment_results.items():
         for region, deployments in regions.items():
             for deployment in deployments:
                 if deployment['state'] == 'failed':
-                    failures.append({
+                    current_failures.append({
                         'service': service_name,
                         'region': region,
                         'host': deployment['host'],
                         'version': deployment['version'],
-                        'exit_status': deployment.get('exit_status', 'unknown')
+                        'exit_status': deployment.get('exit_status', 'unknown'),
+                        'web_url': deployment.get('web_url', '')
                     })
 
-    if failures:
-        markdown += "\n## ❌ Failed Deployments\n\n"
+    if current_failures:
+        markdown += "\n## ❌ Current Failures\n\n"
         markdown += "| Service | Region | Host | Version | Exit Code |\n"
         markdown += "|---------|--------|------|---------|----------|\n"
 
-        for failure in failures:
+        for failure in current_failures:
             markdown += f"| {failure['service']} | {failure['region']} | {failure['host']} | {failure['version']} | {failure['exit_status']} |\n"
+
+    # Running jobs section
+    running_jobs = []
+    for service_name, regions in deployment_results.items():
+        for region, deployments in regions.items():
+            for deployment in deployments:
+                if deployment['state'] == 'running':
+                    running_jobs.append({
+                        'service': service_name,
+                        'region': region,
+                        'host': deployment['host'],
+                        'version': deployment['version']
+                    })
+
+    if running_jobs:
+        markdown += f"\n## 🏃 Currently Deploying ({len(running_jobs)} active)\n\n"
+        for job in running_jobs:
+            markdown += f"- **{job['service']}** v{job['version']} → {job['host']} ({job['region']})\n"
 
     # Post-script summary (if any)
     if post_script_results and stats['total_post_scripts'] > 0:
         markdown += f"\n## 🔧 Post-Deployment Scripts\n\n"
         script_success_rate = (stats['successful_post_scripts'] / stats['total_post_scripts'] * 100) if stats['total_post_scripts'] > 0 else 0
-        markdown += f"**Success Rate:** {script_success_rate:.1f}% ({stats['successful_post_scripts']}/{stats['total_post_scripts']})\n\n"
+        markdown += f"**Success Rate:** {script_success_rate:.1f}% ({stats['successful_post_scripts']}/{stats['total_post_scripts']})"
 
-        for service_name, regions in sorted(post_script_results.items()):
-            for region, scripts in regions.items():
-                for script in scripts:
-                    status = "✅" if script['state'] == 'passed' else "❌" if script['state'] == 'failed' else "🏃"
-                    markdown += f"- {status} **{script['script']}** on {script['host']} ({service_name})\n"
+        if stats['running_post_scripts'] > 0:
+            markdown += f" | 🏃 {stats['running_post_scripts']} running"
 
-    # Metadata section (if available)
+        markdown += "\n\n"
+
+    # Footer with metadata
     if metadata:
         generation_time = metadata.get('generation-timestamp', 'unknown')
-        markdown += f"\n---\n\n*Pipeline generated at: {generation_time}*\n"
+        markdown += f"\n---\n\n*Pipeline generated: {generation_time} | Next update in 10 seconds...*\n"
+    else:
+        markdown += f"\n---\n\n*Next update in 10 seconds...*\n"
 
     return markdown
 
 
-def create_buildkite_annotation(markdown_content):
+def create_buildkite_annotation(markdown_content, is_final=False):
     """
-    Create a Buildkite annotation with the deployment summary.
-    Uses the buildkite-agent annotate command.
+    Create or update a Buildkite annotation with the deployment summary.
+    Uses consistent context so updates replace previous annotations.
     """
-    annotation_style = "info"  # Can be: success, info, warning, error
+    annotation_style = "info" if not is_final else "success"
 
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
-        print("Creating Buildkite annotation...")
-
         # Write markdown to temporary file
-        temp_file = "deployment_summary.md"
+        temp_file = "live_deployment_summary.md"
         with open(temp_file, 'w') as f:
             f.write(markdown_content)
 
-        # Create annotation
-        annotate_cmd = f'buildkite-agent annotate --style {annotation_style} --context deployment-summary < {temp_file}'
+        # Create/update annotation with consistent context for replacement
+        annotate_cmd = f'buildkite-agent annotate --style {annotation_style} --context live-deployment-dashboard < {temp_file}'
         result = system(annotate_cmd)
 
-        if result == 0:
-            print("✅ Deployment summary annotation created successfully!")
-        else:
-            print(f"❌ Failed to create annotation (exit code: {result})")
+        return result == 0
     else:
-        print("Running locally - would create annotation with content:")
-        print("=" * 50)
+        print("=" * 80)
         print(markdown_content)
-        print("=" * 50)
+        print("=" * 80)
+        return True
 
 
 def main():
     """
-    Main function that orchestrates the deployment summary generation.
-    Think of this as your deployment "after-action report" generator.
+    Main function that runs the live deployment monitoring loop.
+    Updates the annotation every 10 seconds until pipeline reaches terminal state.
     """
-    print("=== Generating Deployment Summary ===")
+    print("=== Starting Live Deployment Dashboard ===")
 
-    # Get build data from API
-    build_data = get_current_build_data()
-    if not build_data:
-        print("ERROR: Cannot fetch build data - summary generation failed")
-        return
+    update_count = 0
+    start_time = datetime.now()
 
-    print(f"Analyzing build #{build_data.get('number', 'unknown')} with {len(build_data.get('jobs', []))} jobs")
-
-    # Parse deployment results
-    deployment_results, post_script_results = parse_deployment_jobs(build_data)
-
-    if not deployment_results:
-        print("WARNING: No deployment jobs found in build data")
-        # Still create a summary showing this
-        markdown = f"""
-# ⚠️ Deployment Summary - No Deployments Found
-
-**Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
-
-No deployment jobs were detected in this build. This could mean:
-- The deployment pipeline hasn't started yet
-- Job naming doesn't match expected patterns
-- This summary ran too early in the pipeline
-
-Check the build logs and pipeline configuration.
-"""
-        create_buildkite_annotation(markdown)
-        return
-
-    # Calculate statistics
-    stats = calculate_deployment_statistics(deployment_results, post_script_results)
-
-    # Load metadata for additional context
+    # Initial metadata load
     metadata = get_metadata_artifact()
 
-    # Generate the comprehensive summary
-    print(f"Generating summary for {stats['total_services']} services across {stats['total_regions']} regions...")
-    markdown_summary = generate_summary_markdown(deployment_results, post_script_results, stats, metadata)
+    print("🚀 Beginning live monitoring loop (updates every 10 seconds)")
+    print("📊 Will stop when pipeline reaches rollback decision point or completes")
 
-    # Create the Buildkite annotation
-    create_buildkite_annotation(markdown_summary)
+    while True:
+        update_count += 1
+        print(f"\n--- Live Update #{update_count} at {datetime.now().strftime('%H:%M:%S')} ---")
 
-    print("=== Summary Generation Complete ===")
-    print(f"📊 Processed {stats['total_deployments']} deployments")
-    print(f"✅ Success rate: {(stats['successful_deployments']/stats['total_deployments']*100):.1f}%" if stats['total_deployments'] > 0 else "No deployments to analyze")
+        # Get current build data
+        build_data = get_current_build_data()
+        if not build_data:
+            print("❌ Failed to fetch build data, retrying in 10 seconds...")
+            time.sleep(10)
+            continue
+
+        # Check if we should stop monitoring
+        should_stop, stop_reason = should_stop_monitoring(build_data)
+        if should_stop:
+            print(f"🛑 Stopping live updates: {stop_reason}")
+
+            # Generate final summary
+            deployment_results, post_script_results = parse_deployment_jobs(build_data)
+            stats = calculate_deployment_statistics(deployment_results, post_script_results)
+            progress = get_pipeline_progress(build_data)
+
+            # Create final annotation (without "Next update in 10 seconds...")
+            final_markdown = generate_live_summary_markdown(
+                deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
+            ).replace("*Next update in 10 seconds...*", f"*Final summary - {stop_reason}*")
+
+            create_buildkite_annotation(final_markdown, is_final=True)
+            print("✅ Final deployment summary created!")
+            break
+
+        # Parse current deployment state
+        deployment_results, post_script_results = parse_deployment_jobs(build_data)
+
+        if not deployment_results and update_count == 1:
+            print("⏰ No deployment jobs detected yet, waiting for pipeline to start...")
+            create_buildkite_annotation(f"""
+# ⏰ Live Deployment Dashboard - WAITING
+
+🔄 **Live Update #{update_count}** | **Waiting for deployments to begin...**
+
+The deployment pipeline is starting up. Deployment jobs will appear here as they begin executing.
+
+*Next update in 10 seconds...*
+""")
+        else:
+            # Calculate statistics and progress
+            stats = calculate_deployment_statistics(deployment_results, post_script_results)
+            progress = get_pipeline_progress(build_data)
+
+            # Generate live summary
+            markdown_summary = generate_live_summary_markdown(
+                deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
+            )
+
+            # Update annotation
+            success = create_buildkite_annotation(markdown_summary)
+
+            if success:
+                print(f"✅ Updated live dashboard (Progress: {progress['progress_percent']:.1f}%)")
+                if stats['failed_deployments'] > 0:
+                    print(f"⚠️  {stats['failed_deployments']} failed deployments detected")
+                if stats['running_deployments'] > 0:
+                    print(f"🏃 {stats['running_deployments']} deployments currently running")
+            else:
+                print("❌ Failed to update annotation")
+
+        # Wait 10 seconds before next update
+        print("⏰ Waiting 10 seconds for next update...")
+        time.sleep(10)
+
+    total_runtime = datetime.now() - start_time
+    print(f"\n=== Live Dashboard Complete ===")
+    print(f"📊 Total updates: {update_count}")
+    print(f"⏱️  Total runtime: {str(total_runtime).split('.')[0]}")
+    print("🎯 Dashboard monitoring finished!")
 
 
 if __name__ == "__main__":
