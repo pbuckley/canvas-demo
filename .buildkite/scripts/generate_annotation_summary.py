@@ -185,11 +185,18 @@ def parse_deployment_jobs(build_data):
             continue
 
         # Parse deployment jobs using regex patterns
-        deploy_pattern = r'Deploy (\w+(?:\s+\w+)*) ([\d\w.-]+) to (\w+)'
-        script_pattern = r'Run ([\w.-]+) for (\w+(?:\s+\w+)*) on (\w+)'
+        deploy_pattern = r':windows:\s+Deploy\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+([\d\w.-]+)\s+to\s+(\w+)'
+        script_pattern = r':gear:\s+Run\s+([\w.-]+)\s+for\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+on\s+(\w+)'
 
         deploy_match = re.search(deploy_pattern, job_name)
         script_match = re.search(script_pattern, job_name)
+
+        # DEBUG: Show pattern matching attempts
+        print(f"  Testing patterns on: '{job_name}'")
+        print(f"    Deploy pattern: {deploy_pattern}")
+        print(f"    Script pattern: {script_pattern}")
+        print(f"    Deploy match: {bool(deploy_match)}")
+        print(f"    Script match: {bool(script_match)}")
 
         if deploy_match:
             service_name = deploy_match.group(1)
