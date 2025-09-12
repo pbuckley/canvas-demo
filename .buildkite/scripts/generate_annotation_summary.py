@@ -129,10 +129,16 @@ def should_stop_monitoring(build_data):
         for job in blocked_jobs:
             print(f"  - {job['name']} ({job['type']}, {job['state']})")
 
-        # If we have any blocked jobs that might be manual intervention, stop
-        for job in blocked_jobs:
-            if job['type'] == 'waiter':
-                return True, f"Manual intervention needed: {job['name']} ({job['state']})"
+    # Check for rollback/redeploy jobs that are blocked (manual intervention needed)
+    for job in rollback_jobs:
+        if job['state'] in ['blocked', 'waiting'] and ('rollback' in job['name'].lower() and 'redeploy' in job['name'].lower()):
+            print(f"  Found blocked rollback job - stopping monitoring: {job['name']} ({job['state']})")
+            return True, f"Rollback decision point reached: {job['name']} ({job['state']})"
+
+    # Check for manual intervention jobs (waiter type that are blocked)
+    for job in blocked_jobs:
+        if job['type'] == 'waiter':
+            return True, f"Manual intervention needed: {job['name']} ({job['state']})"
 
     # Continue monitoring if pipeline is still active
     print("Pipeline still running, continuing monitoring...")
