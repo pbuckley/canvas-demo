@@ -629,28 +629,28 @@ def main():
             time.sleep(10)
             continue
 
-        # Check if we should stop monitoring
+        # Parse current deployment state FIRST (always get the latest data)
+        deployment_results, post_script_results = parse_deployment_jobs(build_data)
+        stats = calculate_deployment_statistics(deployment_results, post_script_results)
+        progress = get_pipeline_progress(build_data)
+
+        # Check if we should stop monitoring AFTER collecting the data
         should_stop, stop_reason = should_stop_monitoring(build_data)
+
         if should_stop:
-            print(f"🛑 Stopping live updates: {stop_reason}")
+            print(f"🛑 Detected stop condition: {stop_reason}")
+            print("📊 Generating final comprehensive summary with latest deployment data...")
 
-            # Generate final summary
-            deployment_results, post_script_results = parse_deployment_jobs(build_data)
-            stats = calculate_deployment_statistics(deployment_results, post_script_results)
-            progress = get_pipeline_progress(build_data)
-
-            # Create final annotation (without "Next update in 10 seconds...")
+            # Create final annotation with the freshly collected data
             final_markdown = generate_live_summary_markdown(
                 deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
             ).replace("*Next update in 10 seconds...*", f"*Final summary - {stop_reason}*")
 
             create_buildkite_annotation(final_markdown, is_final=True)
-            print("✅ Final deployment summary created!")
+            print("✅ Final deployment summary created with complete deployment status!")
             break
 
-        # Parse current deployment state
-        deployment_results, post_script_results = parse_deployment_jobs(build_data)
-
+        # Continue with regular live updates if not stopping
         if not deployment_results and update_count == 1:
             print("⏰ No deployment jobs detected yet, waiting for pipeline to start...")
             create_buildkite_annotation(f"""
@@ -663,11 +663,7 @@ The deployment pipeline is starting up. Deployment jobs will appear here as they
 *Next update in 10 seconds...*
 """)
         else:
-            # Calculate statistics and progress
-            stats = calculate_deployment_statistics(deployment_results, post_script_results)
-            progress = get_pipeline_progress(build_data)
-
-            # Generate live summary
+            # Generate live summary for regular updates using data we already collected
             markdown_summary = generate_live_summary_markdown(
                 deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
             )
