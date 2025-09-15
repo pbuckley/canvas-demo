@@ -32,7 +32,7 @@ def create_dynamic_step_key(prefix_fragment):
     return prefix_fragment + '-' + now.strftime("%Y-%m-%d-%H-%M")
 
 
-def get_build_data(org_name, pipeline_slug, build_number, api_token):
+def get_build_data(org_name, pipeline_slug, build_number, api_token, debug=False):
     """Fetch build data from Buildkite API"""
     url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_slug}/builds/{build_number}"
     headers = {'Authorization': f'Bearer {api_token}'}
@@ -42,7 +42,17 @@ def get_build_data(org_name, pipeline_slug, build_number, api_token):
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        return response.json()
+
+        build_data = response.json()
+
+        if debug:
+            debug_filename = f"build_{build_number}_debug.json"
+            with open(debug_filename, 'w') as f:
+                json.dump(build_data, f, indent=2)
+            print(f"📁 Raw API response saved to: {debug_filename}")
+
+        return build_data
+
     except requests.RequestException as e:
         print(f"❌ Error fetching build data: {e}")
         sys.exit(1)
@@ -62,14 +72,14 @@ def find_deploy_inputs_job(build_data):
         job_name = job.get('name', 'Unknown')
         job_type = job.get('type')
         job_state = job.get('state')
-        step_key = job.get('step_key', '')
+        step_key = job.get('step_key') or ''  # Handle None case
 
         print(f"📋 Job: {job_name} (type: {job_type}, state: {job_state})")
-        print(f"   Step key: {step_key}")
+        print(f"   Step key: {step_key if step_key else 'None'}")
         print(f"   Job ID: {job_id}")
 
         # Look for the gen-deploy-inputs step key pattern
-        if 'gen-deploy-inputs' in step_key and job_state == 'blocked':
+        if step_key and 'gen-deploy-inputs' in step_key and job_state == 'blocked':
             print(f"🎯 Found blocked gen-deploy-inputs job: {job_id}")
             return job_id
 
@@ -147,26 +157,30 @@ def unblock_job(org_name, pipeline_slug, build_number, job_id, input_data, api_t
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python unblock_pipeline.py <build_number> <input_data.json>")
+    if len(sys.argv) < 3:
+        print("Usage: python unblock_pipeline.py <build_number> <input_data.json> [--debug]")
         print("\nExample:")
         print("  python unblock_pipeline.py 210 deployment_data.json")
+        print("  python unblock_pipeline.py 210 deployment_data.json --debug")
         sys.exit(1)
 
     build_number = sys.argv[1]
     input_file = sys.argv[2]
+    debug_mode = "--debug" in sys.argv
 
     # Configuration
     org_name = "demo"
     pipeline_slug = "demo-pipeline-canvas"  # Set this to your actual pipeline
 
     print(f"🎯 Unblocking build #{build_number} in {org_name}/{pipeline_slug}")
+    if debug_mode:
+        print("🐛 Debug mode enabled")
 
     # Get API token
     api_token = fetch_bk_api_token()
 
     # Step 1: Get build data
-    build_data = get_build_data(org_name, pipeline_slug, build_number, api_token)
+    build_data = get_build_data(org_name, pipeline_slug, build_number, api_token, debug=debug_mode)
 
     # Step 2: Find the blocked gen-deploy-inputs job
     job_id = find_deploy_inputs_job(build_data)
