@@ -619,33 +619,98 @@ def create_buildkite_annotation(markdown_content, is_final=False):
         return True
 
 
+def parse_args():
+    """Parse command line arguments for local testing support"""
+    parser = argparse.ArgumentParser(
+        description='Generate live deployment dashboard annotation',
+        epilog='''
+Examples:
+  # Production mode (in Buildkite environment):
+  python generate_annotation_summary.py
+
+  # Local testing mode:
+  export BUILDKITE_API_TOKEN=bkua_xxxxx
+  python generate_annotation_summary.py --build-id 12345 --org demo --pipeline my-pipeline
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument(
+        '--build-id',
+        help='Build ID to analyze (enables local testing mode)'
+    )
+    parser.add_argument(
+        '--org',
+        help='Buildkite organization name (required for local testing)',
+        default='demo'
+    )
+    parser.add_argument(
+        '--pipeline',
+        help='Pipeline name (required for local testing)'
+    )
+    parser.add_argument(
+        '--no-loop',
+        action='store_true',
+        help='Generate single summary and exit (useful for testing)'
+    )
+
+    return parser.parse_args()
+
+
 def main():
     """
     Main function that runs the live deployment monitoring loop.
     Updates the annotation every 10 seconds until pipeline reaches terminal state.
     """
-    print("=== Starting Live Deployment Dashboard v10 ===")
-    print("🔧 FIXED: Progress calculation now only counts deployment jobs, not all script jobs")
+    args = parse_args()
+
+    # Determine if we're in local testing mode
+    local_mode = bool(args.build_id)
+
+    if local_mode:
+        if not args.pipeline:
+            print("❌ --pipeline is required when using --build-id for local testing")
+            return
+        print(f"=== Starting Local Testing Mode ===")
+        print(f"🔧 Build ID: {args.build_id}")
+        print(f"🔧 Organization: {args.org}")
+        print(f"🔧 Pipeline: {args.pipeline}")
+        print(f"📄 Output will be written to SUMMARY.md")
+    else:
+        print("=== Starting Live Deployment Dashboard v10 ===")
+        print("🔧 FIXED: Progress calculation now only counts deployment jobs, not all script jobs")
 
     update_count = 0
     start_time = datetime.now()
 
-    # Initial metadata load
-    metadata = get_metadata_artifact()
+    # Initial metadata load (skip in local mode since artifacts won't be available)
+    metadata = None if local_mode else get_metadata_artifact()
 
-    print("🚀 Beginning live monitoring loop (updates every 10 seconds)")
-    print("📊 Will stop when pipeline reaches rollback decision point or completes")
+    if not local_mode:
+        print("🚀 Beginning live monitoring loop (updates every 10 seconds)")
+        print("📊 Will stop when pipeline reaches rollback decision point or completes")
 
     while True:
         update_count += 1
-        print(f"\n--- Live Update #{update_count} at {datetime.now().strftime('%H:%M:%S')} ---")
+        if local_mode:
+            print(f"\n--- Generating Summary for Build {args.build_id} ---")
+        else:
+            print(f"\n--- Live Update #{update_count} at {datetime.now().strftime('%H:%M:%S')} ---")
 
         # Get current build data
-        build_data = get_current_build_data()
+        if local_mode:
+            build_data = get_current_build_data(args.build_id, args.org, args.pipeline)
+        else:
+            build_data = get_current_build_data()
+
         if not build_data:
-            print("❌ Failed to fetch build data, retrying in 10 seconds...")
-            time.sleep(10)
-            continue
+            if local_mode:
+                print("❌ Failed to fetch build data - check build ID, org, and pipeline name")
+                return
+            else:
+                print("❌ Failed to fetch build data, retrying in 10 seconds...")
+                time.sleep(10)
+                continue
 
         # Parse current deployment state FIRST (always get the latest data)
         deployment_results, post_script_results = parse_deployment_jobs(build_data)
@@ -657,7 +722,7 @@ def main():
         # Check if we should stop monitoring AFTER collecting the data
         should_stop, stop_reason = should_stop_monitoring(build_data)
 
-        if should_stop:
+        if should_stop and not local_mode:
             print(f"🛑 Detected stop condition: {stop_reason}")
             print("📊 Generating final comprehensive summary with latest deployment data...")
 
@@ -666,12 +731,12 @@ def main():
                 deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
             ).replace("*Next update in 10 seconds...*", f"*Final summary - {stop_reason}*")
 
-            create_buildkite_annotation(final_markdown, is_final=True)
+            create_buildkite_annotation(final_markdown, is_final=True, local_mode=local_mode)
             print("✅ Final deployment summary created with complete deployment status!")
             break
 
         # Continue with regular live updates if not stopping
-        if not deployment_results and update_count == 1:
+        if not deployment_results and update_count == 1 and not local_mode:
             print("⏰ No deployment jobs detected yet, waiting for pipeline to start...")
             create_buildkite_annotation(f"""
 # ⏰ Live Deployment Dashboard - WAITING
@@ -681,18 +746,22 @@ def main():
 The deployment pipeline is starting up. Deployment jobs will appear here as they begin executing.
 
 *Next update in 10 seconds...*
-""")
+""", local_mode=local_mode)
         else:
             # Generate live summary for regular updates using data we already collected
             markdown_summary = generate_live_summary_markdown(
                 deployment_results, post_script_results, stats, metadata, progress, update_count, start_time
             )
 
+            # In local mode, remove the "next update" footer
+            if local_mode:
+                markdown_summary = markdown_summary.replace("*Next update in 10 seconds...*", f"*Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} for build {args.build_id}*")
+
             # Update annotation
-            success = create_buildkite_annotation(markdown_summary)
+            success = create_buildkite_annotation(markdown_summary, local_mode=local_mode)
 
             if success:
-                print(f"✅ Updated live dashboard (Progress: {progress['progress_percent']:.1f}%)")
+                print(f"✅ {'Generated summary' if local_mode else 'Updated live dashboard'} (Progress: {progress['progress_percent']:.1f}%)")
                 if stats['failed_deployments'] > 0:
                     print(f"⚠️  {stats['failed_deployments']} failed deployments detected")
                 if stats['running_deployments'] > 0:
@@ -700,15 +769,20 @@ The deployment pipeline is starting up. Deployment jobs will appear here as they
             else:
                 print("❌ Failed to update annotation")
 
-        # Wait 10 seconds before next update
+        # Exit after one iteration in local mode or if --no-loop specified
+        if local_mode or args.no_loop:
+            print(f"📄 Local testing complete - summary {'written to SUMMARY.md' if local_mode else 'generated'}")
+            break
+
+        # Wait 10 seconds before next update (production mode only)
         print("⏰ Waiting 10 seconds for next update...")
         time.sleep(10)
 
     total_runtime = datetime.now() - start_time
-    print(f"\n=== Live Dashboard Complete ===")
+    print(f"\n=== {'Local Testing' if local_mode else 'Live Dashboard'} Complete ===")
     print(f"📊 Total updates: {update_count}")
     print(f"⏱️  Total runtime: {str(total_runtime).split('.')[0]}")
-    print("🎯 Dashboard monitoring finished!")
+    print("🎯 Dashboard {'testing' if local_mode else 'monitoring'} finished!")
 
 
 if __name__ == "__main__":
