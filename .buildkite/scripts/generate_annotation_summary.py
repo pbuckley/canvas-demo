@@ -759,7 +759,7 @@ The deployment pipeline is starting up. Deployment jobs will appear here as they
                 markdown_summary = markdown_summary.replace("*Next update in 10 seconds...*", f"*Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} for build {args.build_id}*")
 
             # Update annotation
-            success = create_buildkite_annotation(markdown_summary, local_mode=local_mode)
+            success = create_buildkite_annotation(markdown_summary, is_final=False, local_mode=local_mode)
 
             if success:
                 print(f"✅ {'Generated summary' if local_mode else 'Updated live dashboard'} (Progress: {progress['progress_percent']:.1f}%)")
