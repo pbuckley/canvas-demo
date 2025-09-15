@@ -61,102 +61,84 @@ def get_build_data(org_name, pipeline_slug, build_number, api_token, debug=False
         sys.exit(1)
 
 
-def find_region_input_key(build_data):
+def find_region_input_key_or_predict(build_data, build_number):
     """
-    Find the dynamic region input key with timestamp pattern.
-    Looks for keys matching: region-inputs-YYYY-MM-DD-HH-MM
+    Find the dynamic region input key, or predict what it should be.
+
+    The region key only exists AFTER the input form is submitted, but we need to
+    know what key to use BEFORE submitting. So we'll predict it based on the
+    input step's creation time or step key.
 
     Returns:
-        str: The region input key, or None if not found
+        str: The region input key (existing or predicted)
     """
-    print("\n🔍 === DEBUGGING BUILD DATA STRUCTURE ===")
-    print(f"📋 Build data keys: {list(build_data.keys())}")
-    print(f"🏗️  Build state: {build_data.get('state', 'unknown')}")
-    print(f"📊 Total jobs: {len(build_data.get('jobs', []))}")
+    print("\n🔍 === FINDING OR PREDICTING REGION KEY ===")
 
-    # Check build-level metadata
+    # First, check if region key already exists in metadata (from previous submission)
     meta_data = build_data.get('meta_data', {})
-    print(f"🏷️  Build meta_data keys: {list(meta_data.keys())}")
-
-    if meta_data:
-        print("📝 Build meta_data contents:")
-        for k, v in meta_data.items():
-            print(f"  {k}: {v}")
-
-    # Also check if region data is stored in jobs or steps
-    print("\n🔍 Checking jobs for region data...")
-    for i, job in enumerate(build_data.get('jobs', [])):
-        job_name = job.get('name', f'Job {i}')
-        job_type = job.get('type', 'unknown')
-        job_state = job.get('state', 'unknown')
-        print(f"  Job {i}: {job_name} (type: {job_type}, state: {job_state})")
-
-        # Check job-level metadata
-        if 'meta_data' in job:
-            job_meta = job.get('meta_data', {})
-            if job_meta:
-                print(f"    Job meta_data: {job_meta}")
-
-        # Check if this is an input job with fields
-        if job_type == 'waiter' and 'fields' in job:
-            print(f"    🎯 Input job fields: {list(job.get('fields', {}).keys())}")
-
-    # Check steps array too (sometimes data is here)
-    print(f"\n🔍 Checking steps array... (found {len(build_data.get('steps', []))} steps)")
-    for i, step in enumerate(build_data.get('steps', [])):
-        step_name = step.get('name', f'Step {i}')
-        step_type = step.get('type', 'unknown')
-        print(f"  Step {i}: {step_name} (type: {step_type})")
-        if 'meta_data' in step:
-            step_meta = step.get('meta_data', {})
-            if step_meta:
-                print(f"    Step meta_data: {step_meta}")
-
-    # Pattern matches region-inputs-YYYY-MM-DD-HH-MM (no seconds, per your get_releases.py)
     pattern = r"region-inputs-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})"
 
-    print(f"\n🔎 Searching for pattern: {pattern}")
-
-    # Search in build metadata
-    matching_keys = []
+    existing_keys = []
     for key in meta_data.keys():
-        print(f"  Testing key: '{key}'")
         match = re.match(pattern, key)
         if match:
-            # Extract datetime for sorting (get most recent)
-            dt_str = match.group(1)
-            dt_obj = datetime.strptime(dt_str, "%Y-%m-%d-%H-%M")
-            matching_keys.append((key, dt_obj))
-            print(f"    ✅ MATCH! Found region input key: {key}")
-        else:
-            print(f"    ❌ No match")
+            existing_keys.append(key)
+            print(f"✅ Found existing region key in metadata: {key}")
 
-    # If not found in build metadata, search in job metadata
-    if not matching_keys:
-        print("\n🔍 Searching job metadata for region keys...")
-        for job in build_data.get('jobs', []):
-            job_meta = job.get('meta_data', {})
-            for key in job_meta.keys():
-                print(f"  Testing job meta key: '{key}'")
-                match = re.match(pattern, key)
-                if match:
-                    dt_str = match.group(1)
-                    dt_obj = datetime.strptime(dt_str, "%Y-%m-%d-%H-%M")
-                    matching_keys.append((key, dt_obj))
-                    print(f"    ✅ MATCH in job! Found region input key: {key}")
+    if existing_keys:
+        # Use most recent existing key
+        latest_key = sorted(existing_keys, reverse=True)[0]
+        print(f"🎯 Using existing region key: {latest_key}")
+        return latest_key
 
-    if not matching_keys:
-        print("❌ No region input key found anywhere")
-        print("🤔 This might mean:")
-        print("   1. The input step hasn't been created yet")
-        print("   2. The region data is stored differently than expected")
-        print("   3. We're looking at the wrong build/pipeline")
-        return None
+    print("🔮 No existing region key found, need to predict one...")
 
-    # Sort by datetime (most recent first) and return the key
-    most_recent_key = sorted(matching_keys, key=lambda x: x[1], reverse=True)[0][0]
-    print(f"✅ Using most recent region key: {most_recent_key}")
-    return most_recent_key
+    # Strategy: Look at the input step's step_key to extract the timestamp
+    # From get_releases.py, the pattern is: get-deploy-inputs-YYYY-MM-DD-HH-MM
+    # And regions use: region-inputs-YYYY-MM-DD-HH-MM (same timestamp)
+
+    for job in build_data.get('jobs', []):
+        if job.get('type') == 'waiter':  # This is our input step
+            step_key = job.get('step_key', '')
+            job_name = job.get('name', 'Unknown')
+
+            print(f"🎯 Found input step: {job_name}")
+            print(f"📋 Step key: {step_key}")
+
+            # Extract timestamp from step key like: get-deploy-inputs-2025-09-15-17-45
+            input_pattern = r"get-deploy-inputs-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})"
+            match = re.search(input_pattern, step_key)
+
+            if match:
+                timestamp = match.group(1)
+                predicted_region_key = f"region-inputs-{timestamp}"
+                print(f"🎯 Predicted region key: {predicted_region_key}")
+                return predicted_region_key
+            else:
+                print(f"❌ Could not extract timestamp from step key: {step_key}")
+
+    # Fallback: Try to predict based on job creation time
+    print("🔮 Trying fallback: predict from input job creation time...")
+
+    for job in build_data.get('jobs', []):
+        if job.get('type') == 'waiter':
+            created_at = job.get('created_at', '')
+            if created_at:
+                # Parse ISO timestamp: 2025-09-15T17:45:13.050Z
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    # Round down to nearest minute (as get_releases.py does)
+                    rounded_dt = dt.replace(second=0, microsecond=0)
+                    timestamp = rounded_dt.strftime("%Y-%m-%d-%H-%M")
+                    predicted_key = f"region-inputs-{timestamp}"
+                    print(f"🎯 Predicted region key from creation time: {predicted_key}")
+                    return predicted_key
+                except Exception as e:
+                    print(f"❌ Error parsing creation time {created_at}: {e}")
+
+    print("❌ Could not find or predict region input key")
+    return None
 
 
 def find_blocked_input_job(build_data):
@@ -166,65 +148,38 @@ def find_blocked_input_job(build_data):
     Returns:
         str: Job ID of the blocked input step
     """
-    print("\n🔍 === DEBUGGING JOB SEARCH ===")
-
-    blocked_jobs = []
-    input_jobs = []
-    all_jobs = []
+    print("\n🔍 === FINDING BLOCKED INPUT JOB ===")
 
     for job in build_data.get('jobs', []):
         job_id = job.get('id', 'unknown')
         job_name = job.get('name', 'Unknown')
         job_type = job.get('type', 'unknown')
         job_state = job.get('state', 'unknown')
+        step_key = job.get('step_key', '')
 
-        all_jobs.append((job_name, job_type, job_state, job_id))
+        print(f"🔍 Job: '{job_name}' (type: {job_type}, state: {job_state})")
+        if step_key:
+            print(f"   Step key: {step_key}")
 
-        print(f"🔍 Job: '{job_name}'")
-        print(f"   Type: {job_type}, State: {job_state}, ID: {job_id}")
+        # Look for manual/waiter jobs that are blocked
+        # From your debug output: Job 2: Job 2 (type: manual, state: blocked)
+        if job_type in ['waiter', 'manual'] and job_state == 'blocked':
+            # Double-check this is an input step by looking for input-related step keys
+            if 'input' in step_key.lower() or 'deploy-inputs' in step_key.lower():
+                print(f"🎯 Found blocked input job: {job_name} (ID: {job_id})")
+                return job_id
+            else:
+                print(f"⚠️  Blocked {job_type} job but doesn't look like input step: {step_key}")
 
-        # Collect input/waiter jobs
-        if job_type == 'waiter':
-            input_jobs.append((job_name, job_state, job_id))
-            print(f"   ⭐ This is a waiter/input job!")
-
-            # Check if it has fields (input form)
-            if 'fields' in job:
-                fields = job.get('fields', [])
-                print(f"   📝 Has {len(fields)} input fields:")
-                for field in fields:
-                    if isinstance(field, dict):
-                        field_key = field.get('key', 'no-key')
-                        field_type = field.get('select', field.get('text', 'unknown-type'))
-                        print(f"      - {field_key}: {field_type}")
-
-        # Collect blocked jobs
-        if job_state == 'blocked':
-            blocked_jobs.append((job_name, job_type, job_id))
-            print(f"   🚫 This job is BLOCKED!")
-
-        print()  # Blank line for readability
-
-    print(f"📊 Summary:")
-    print(f"   Total jobs: {len(all_jobs)}")
-    print(f"   Input/waiter jobs: {len(input_jobs)}")
-    print(f"   Blocked jobs: {len(blocked_jobs)}")
-
-    # Look for waiter jobs that are blocked
+    # Fallback: any blocked manual/waiter job
     for job in build_data.get('jobs', []):
-        if job.get('type') == 'waiter' and job.get('state') == 'blocked':
+        if job.get('type') in ['waiter', 'manual'] and job.get('state') == 'blocked':
             job_id = job.get('id')
             job_name = job.get('name', 'Unknown')
-            print(f"🎯 Found blocked input job: {job_name} (ID: {job_id})")
+            print(f"🎯 Fallback: Using blocked {job.get('type')} job: {job_name} (ID: {job_id})")
             return job_id
 
     print("❌ No blocked input job found")
-    print("🤔 Available jobs summary:")
-    for name, job_type, state, job_id in all_jobs[:5]:  # Show first 5
-        print(f"   {name} ({job_type}, {state})")
-    if len(all_jobs) > 5:
-        print(f"   ... and {len(all_jobs) - 5} more jobs")
-
     return None
 
 
@@ -324,7 +279,7 @@ def main():
     build_data = get_build_data(org_name, pipeline_slug, build_number, api_token, debug=debug_mode)
 
     # Find the region input key with timestamp
-    region_key = find_region_input_key(build_data)
+    region_key = find_region_input_key_or_predict(build_data, build_number)
     if not region_key:
         sys.exit(1)
 
