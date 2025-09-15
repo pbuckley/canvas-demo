@@ -286,12 +286,14 @@ def extract_region_from_job(job, build_data):
     Looks for region information in job groups or step keys.
     """
     # Try to find region from step group by looking at the job's step
-    job_step_key = job.get('step_key', '')
+    job_step_key = job.get('step_key')
 
-    # Look for region patterns in step key
-    region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_step_key)
-    if region_match:
-        return region_match.group(1)
+    # Only search if job_step_key is actually a string
+    if job_step_key and isinstance(job_step_key, str):
+        # Look for region patterns in step key
+        region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_step_key)
+        if region_match:
+            return region_match.group(1)
 
     # Try to find region from step groups in build data
     for step in build_data.get('steps', []):
@@ -301,6 +303,14 @@ def extract_region_from_job(job, build_data):
                 region_match = re.search(r'Region\s+([a-z]+-[a-z]+-\d+)', group_label)
                 if region_match:
                     return region_match.group(1)
+
+    # Try to extract region from job name itself as a fallback
+    job_name = job.get('name', '')
+    if job_name:
+        # Look for region patterns in the job name
+        region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_name.lower())
+        if region_match:
+            return region_match.group(1)
 
     # Fallback to parsing from job name or return default
     return 'unknown-region'
