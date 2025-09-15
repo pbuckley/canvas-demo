@@ -6,6 +6,28 @@ Simple script to unblock Buildkite pipeline input step.
 3. Submit the form data
 
 Usage: python unblock_pipeline.py <build_number> <input_data.json>
+
+Sample deployment_data.json file:
+{
+  "fields": {
+    "service-newbie-ver": "1.2",
+    "service-newbie-hosts": "newsrv01,newsrv02,newsrv03",
+    "service-newbie-pwsh": "newpost.py",
+
+    "service-web-ver": "9.23c",
+    "service-web-hosts": "websrv01,websrv78,websrv15",
+    "service-web-pwsh": "webconfig.py",
+
+    "service-bar-ver": "10.7",
+    "service-bar-hosts": "filesrv01,filesrv02,filesrv05",
+    "service-bar-pwsh": "BarPostInstall.PS1",
+
+    "app-foo-ver": "1.708",
+    "app-foo-hosts": "appsrv00,appsrv01,appsrv010",
+    "app-foo-pwsh": "foo_app_config.sh"
+  }
+}
+
 """
 
 import sys
@@ -60,10 +82,10 @@ def get_build_data(org_name, pipeline_slug, build_number, api_token, debug=False
 
 def find_deploy_inputs_job(build_data):
     """
-    Find the blocked input job (manual/waiter type with get-deploy-inputs step key)
+    Find the blocked input job and extract the timestamp from its step key
 
     Returns:
-        str: Job ID of the blocked input step
+        tuple: (job_id, region_key) or (None, None)
     """
     print("\n🔍 Looking for input job (get-deploy-inputs)...")
 
@@ -81,23 +103,33 @@ def find_deploy_inputs_job(build_data):
         # Look for the INPUT job: manual/waiter type with get-deploy-inputs step key
         if (step_key and 'get-deploy-inputs' in step_key and
             job_type in ['manual', 'waiter'] and job_state == 'blocked'):
-            print(f"🎯 Found blocked input job: {job_id}")
-            return job_id
+
+            # Extract timestamp from get-deploy-inputs-YYYY-MM-DD-HH-MM
+            import re
+            match = re.search(r'get-deploy-inputs-(\d{4}-\d{2}-\d{2}-\d{2}-\d{2})', step_key)
+            if match:
+                timestamp = match.group(1)
+                region_key = f"region-inputs-{timestamp}"
+                print(f"🎯 Found blocked input job: {job_id}")
+                print(f"🔑 Extracted region key: {region_key}")
+                return job_id, region_key
+            else:
+                print(f"❌ Could not extract timestamp from step key: {step_key}")
 
         print()
 
     print("❌ No blocked input job found")
     print("🤔 We need a manual/waiter job with 'get-deploy-inputs' in the step key")
-    return None
+    return None, None
 
 
 def load_input_data(json_file, region_key):
     """
-    Load input data from JSON file and add the generated region key
+    Load input data from JSON file and add the extracted region key
 
     Args:
         json_file (str): Path to JSON file with service data
-        region_key (str): Generated region input key
+        region_key (str): Extracted region input key from the input step
 
     Returns:
         dict: Complete form data ready for submission
@@ -109,11 +141,11 @@ def load_input_data(json_file, region_key):
         print(f"❌ Error reading {json_file}: {e}")
         sys.exit(1)
 
-    # Add the generated region key to the fields
+    # Add the extracted region key to the fields
     if 'fields' not in data:
         data['fields'] = {}
 
-    print(f"📝 Generated region key: {region_key}")
+    print(f"📝 Using extracted region key: {region_key}")
 
     # Add region selection (you can customize these regions)
     data['fields'][region_key] = [
@@ -184,18 +216,15 @@ def main():
     # Step 1: Get build data
     build_data = get_build_data(org_name, pipeline_slug, build_number, api_token, debug=debug_mode)
 
-    # Step 2: Find the blocked gen-deploy-inputs job
-    job_id = find_deploy_inputs_job(build_data)
-    if not job_id:
+    # Step 2: Find the blocked input job and extract the region key
+    job_id, region_key = find_deploy_inputs_job(build_data)
+    if not job_id or not region_key:
         sys.exit(1)
 
-    # Step 3: Generate new region input key (with current timestamp)
-    region_key = create_dynamic_step_key('region-inputs')
-
-    # Step 4: Load input data and add region key
+    # Step 3: Load input data and add the extracted region key
     input_data = load_input_data(input_file, region_key)
 
-    # Step 5: Submit the unblock request
+    # Step 4: Submit the unblock request
     success = unblock_job(org_name, pipeline_slug, build_number, job_id, input_data, api_token)
 
     if success:
