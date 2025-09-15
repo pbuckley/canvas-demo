@@ -60,32 +60,34 @@ def get_build_data(org_name, pipeline_slug, build_number, api_token, debug=False
 
 def find_deploy_inputs_job(build_data):
     """
-    Find the blocked gen-deploy-inputs job by step_key pattern
+    Find the blocked input job (manual/waiter type with get-deploy-inputs step key)
 
     Returns:
-        str: Job ID of the blocked deploy inputs step
+        str: Job ID of the blocked input step
     """
-    print("\n🔍 Looking for gen-deploy-inputs job...")
+    print("\n🔍 Looking for input job (get-deploy-inputs)...")
 
     for job in build_data.get('jobs', []):
         job_id = job.get('id')
         job_name = job.get('name', 'Unknown')
         job_type = job.get('type')
         job_state = job.get('state')
-        step_key = job.get('step_key') or ''  # Handle None case
+        step_key = job.get('step_key') or ''
 
         print(f"📋 Job: {job_name} (type: {job_type}, state: {job_state})")
         print(f"   Step key: {step_key if step_key else 'None'}")
         print(f"   Job ID: {job_id}")
 
-        # Look for the gen-deploy-inputs step key pattern
-        if step_key and 'gen-deploy-inputs' in step_key and job_state == 'blocked':
-            print(f"🎯 Found blocked gen-deploy-inputs job: {job_id}")
+        # Look for the INPUT job: manual/waiter type with get-deploy-inputs step key
+        if (step_key and 'get-deploy-inputs' in step_key and
+            job_type in ['manual', 'waiter'] and job_state == 'blocked'):
+            print(f"🎯 Found blocked input job: {job_id}")
             return job_id
 
         print()
 
-    print("❌ No blocked gen-deploy-inputs job found")
+    print("❌ No blocked input job found")
+    print("🤔 We need a manual/waiter job with 'get-deploy-inputs' in the step key")
     return None
 
 
