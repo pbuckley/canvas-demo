@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
+import argparse
 from os import getenv, popen, system
 from datetime import datetime, timedelta
 import json
 import requests
 import re
 import time
-import argparse
 from collections import defaultdict, Counter
 
 
@@ -15,26 +15,46 @@ def fetch_bk_api_token():
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
         print("In hosted env, fetching bk api token from secret")
         return str.strip(popen("buildkite-agent secret get readtokenpb").read())
+    elif getenv("BUILDKITE_API_TOKEN"):
+        print("Using BUILDKITE_API_TOKEN from environment")
+        return getenv("BUILDKITE_API_TOKEN")
     else:
-        print("Running locally, fetching bk api token from env var BK_API_TOKEN")
-        return getenv("BK_API_TOKEN")
+        print("❌ No API token found - set BUILDKITE_API_TOKEN environment variable")
+        return None
 
 
-def get_current_build_data():
+def get_current_build_data(build_id=None, org_name=None, pipeline_name=None):
     """
     Get the current build data from Buildkite API to analyze deployment results.
     Returns build data with all job information.
-    """
-    org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
-    pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
-    build_number = getenv("BUILDKITE_BUILD_NUMBER")
 
-    if not all([org_name, pipeline_name, build_number]):
-        print("Missing required environment variables for API call")
+    Args:
+        build_id: Optional build ID for local testing
+        org_name: Optional org name for local testing
+        pipeline_name: Optional pipeline name for local testing
+    """
+    if build_id and org_name and pipeline_name:
+        # Local testing mode - use provided parameters
+        constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_id}"
+        print(f"🔧 LOCAL MODE: Fetching build data from {constructed_url}")
+    else:
+        # Production mode - use environment variables
+        org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
+        pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
+        build_number = getenv("BUILDKITE_BUILD_NUMBER")
+
+        if not all([org_name, pipeline_name, build_number]):
+            print("Missing required environment variables for API call")
+            return None
+
+        constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
+        print(f"🚀 PRODUCTION MODE: Fetching build data from {constructed_url}")
+
+    api_token = fetch_bk_api_token()
+    if not api_token:
+        print("❌ Failed to get API token")
         return None
 
-    constructed_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}"
-    api_token = fetch_bk_api_token()
     headers = {'Authorization': "Bearer " + api_token}
 
     try:
@@ -595,11 +615,24 @@ def generate_live_summary_markdown(deployment_results, post_script_results, stat
     return markdown
 
 
-def create_buildkite_annotation(markdown_content, is_final=False):
+def create_buildkite_annotation(markdown_content, is_final=False, local_mode=False):
     """
     Create or update a Buildkite annotation with the deployment summary.
     Uses consistent context so updates replace previous annotations.
+
+    Args:
+        markdown_content: The markdown content to annotate
+        is_final: Whether this is the final annotation
+        local_mode: If True, write to local file instead of creating annotation
     """
+    if local_mode:
+        # Local testing mode - write to SUMMARY.md file
+        output_file = "SUMMARY.md"
+        with open(output_file, 'w') as f:
+            f.write(markdown_content)
+        print(f"📄 Local mode: Summary written to {output_file}")
+        return True
+
     annotation_style = "info" if not is_final else "success"
 
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
@@ -747,7 +780,7 @@ def main():
 The deployment pipeline is starting up. Deployment jobs will appear here as they begin executing.
 
 *Next update in 10 seconds...*
-""", local_mode=local_mode)
+""", is_final=False, local_mode=local_mode)
         else:
             # Generate live summary for regular updates using data we already collected
             markdown_summary = generate_live_summary_markdown(
