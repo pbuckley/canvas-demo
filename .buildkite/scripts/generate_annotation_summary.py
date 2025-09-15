@@ -100,7 +100,7 @@ def should_stop_monitoring(build_data):
         job_id = job.get('id', 'unknown')
 
         # DEBUG: Log all job states for analysis
-        print(f"Job '{job_name}' (ID: {job_id}): type={job_type}, state={job_state}")
+        print(f"Job '{job_name}' (ID: {job_id[:8]}): type={job_type}, state={job_state}")
 
         # Look for any blocked/waiting jobs (could indicate manual intervention needed)
         if job_state in ['blocked', 'waiting']:
@@ -110,13 +110,6 @@ def should_stop_monitoring(build_data):
         job_name_lower = job_name.lower()
         if ('rollback' in job_name_lower or 'redeploy' in job_name_lower):
             rollback_jobs.append({'name': job_name, 'type': job_type, 'state': job_state})
-
-        # Check for the specific block step pattern from generate_deploy_targets.py
-        # Looking for jobs with "Rollback / Redeploy" in the name
-        if job_type == 'waiter' and ('rollback' in job_name_lower and 'redeploy' in job_name_lower):
-            print(f"  Found rollback block step: {job_name} (state: {job_state})")
-            if job_state in ['blocked', 'waiting', 'unblocked']:
-                return True, f"Reached rollback decision point: {job_name} ({job_state})"
 
     # Debug output
     if rollback_jobs:
@@ -132,12 +125,13 @@ def should_stop_monitoring(build_data):
     # Check for rollback/redeploy jobs that are blocked (manual intervention needed)
     for job in rollback_jobs:
         if job['state'] in ['blocked', 'waiting'] and ('rollback' in job['name'].lower() and 'redeploy' in job['name'].lower()):
-            print(f"  Found blocked rollback job - stopping monitoring: {job['name']} ({job['state']})")
+            print(f"  🛑 Found blocked rollback job - stopping monitoring: {job['name']} ({job['state']})")
             return True, f"Rollback decision point reached: {job['name']} ({job['state']})"
 
     # Check for manual intervention jobs (waiter type that are blocked)
     for job in blocked_jobs:
-        if job['type'] == 'waiter':
+        if job['type'] == 'waiter' and job['state'] in ['blocked', 'waiting']:
+            print(f"  🛑 Found blocked waiter job - stopping monitoring: {job['name']} ({job['state']})")
             return True, f"Manual intervention needed: {job['name']} ({job['state']})"
 
     # Continue monitoring if pipeline is still active
@@ -145,52 +139,51 @@ def should_stop_monitoring(build_data):
     return False, "Pipeline still running"
 
 
-def get_pipeline_progress(build_data):
+def get_pipeline_progress(build_data, deployment_results):
     """
     Calculate overall pipeline progress for the live dashboard.
+    FIXED: Only counts actual deployment-related jobs, not all script jobs
 
     Returns:
         dict: Progress statistics including completion percentage
     """
-    total_jobs = 0
-    completed_jobs = 0
-    running_jobs = 0
-    failed_jobs = 0
+    # Count deployment jobs from our parsed results instead of all script jobs
+    total_deployment_jobs = 0
+    completed_deployment_jobs = 0
+    running_deployment_jobs = 0
+    failed_deployment_jobs = 0
 
-    print(f"\n=== DEBUG: Pipeline Progress Calculation ===")
+    print(f"\n=== DEBUG: Pipeline Progress Calculation (FIXED) ===")
 
-    for job in build_data.get('jobs', []):
-        job_name = job.get('name', 'Unknown Job')
-        job_state = job.get('state', 'unknown')
-        job_type = job.get('type', 'unknown')
-        job_id = job.get('id', 'unknown')
+    # Count actual deployment jobs (not all script jobs like rollback, summary, etc.)
+    for service_name, regions in deployment_results.items():
+        for region, deployments in regions.items():
+            for deployment in deployments:
+                total_deployment_jobs += 1
 
-        # Only count script jobs (actual deployment work)
-        if job.get('type') == 'script':
-            total_jobs += 1
+                if deployment['state'] in ['passed', 'failed', 'canceled', 'skipped']:
+                    completed_deployment_jobs += 1
+                    if deployment['state'] == 'failed':
+                        failed_deployment_jobs += 1
+                elif deployment['state'] == 'running':
+                    running_deployment_jobs += 1
 
-            print(f"Script job '{job_name}' (ID: {job_id}): state={job_state}")
+                print(f"  Deployment job: {service_name} → {deployment['host']} ({region}): {deployment['state']}")
 
-            if job_state in ['passed', 'failed', 'canceled', 'skipped']:
-                completed_jobs += 1
-                if job_state == 'failed':
-                    failed_jobs += 1
-            elif job_state == 'running':
-                running_jobs += 1
+    # Calculate progress based on actual deployment jobs
+    progress_percent = (completed_deployment_jobs / total_deployment_jobs * 100) if total_deployment_jobs > 0 else 0
 
-    progress_percent = (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
-
-    print(f"Pipeline progress: {completed_jobs}/{total_jobs} = {progress_percent:.1f}%")
-    print(f"Running jobs: {running_jobs}")
-    print(f"Failed jobs: {failed_jobs}")
+    print(f"DEPLOYMENT Progress: {completed_deployment_jobs}/{total_deployment_jobs} = {progress_percent:.1f}%")
+    print(f"Running deployments: {running_deployment_jobs}")
+    print(f"Failed deployments: {failed_deployment_jobs}")
 
     return {
-        'total_jobs': total_jobs,
-        'completed_jobs': completed_jobs,
-        'running_jobs': running_jobs,
-        'failed_jobs': failed_jobs,
+        'total_jobs': total_deployment_jobs,
+        'completed_jobs': completed_deployment_jobs,
+        'running_jobs': running_deployment_jobs,
+        'failed_jobs': failed_deployment_jobs,
         'progress_percent': progress_percent,
-        'remaining_jobs': total_jobs - completed_jobs
+        'remaining_jobs': total_deployment_jobs - completed_deployment_jobs
     }
 
 
@@ -218,6 +211,8 @@ def parse_deployment_jobs(build_data):
         'waiting': '⏸️'
     }
 
+    print(f"\n=== DEBUG: Parsing Deployment Jobs ===")
+
     for job in build_data.get('jobs', []):
         job_name = job.get('name', 'Unknown Job')
         job_state = job.get('state', 'unknown')
@@ -229,17 +224,12 @@ def parse_deployment_jobs(build_data):
 
         # Parse deployment jobs using regex patterns that account for emoji prefixes
         deploy_pattern = r':windows:\s+Deploy\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+([\d\w.-]+)\s+to\s+(\w+)'
-        script_pattern = r':gear:\s+Run\s+([\w.-]+)\s+for\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+on\s+(\w+)'
+        script_pattern = r':(gear|pwsh):\s+Run\s+([\w.-]+)\s+for\s+([a-zA-Z0-9-_]+(?:\s+[a-zA-Z0-9-_]+)*)\s+on\s+(\w+)'
 
         deploy_match = re.search(deploy_pattern, job_name)
         script_match = re.search(script_pattern, job_name)
 
-        # DEBUG: Show pattern matching attempts
-        print(f"  Testing patterns on: '{job_name}'")
-        print(f"    Deploy pattern: {deploy_pattern}")
-        print(f"    Script pattern: {script_pattern}")
-        print(f"    Deploy match: {bool(deploy_match)}")
-        print(f"    Script match: {bool(script_match)}")
+        print(f"  Testing job: '{job_name}' (state: {job_state})")
 
         if deploy_match:
             service_name = deploy_match.group(1)
@@ -248,6 +238,8 @@ def parse_deployment_jobs(build_data):
 
             # Determine region from job grouping or fallback to parsing
             region = extract_region_from_job(job, build_data)
+
+            print(f"    ✅ DEPLOYMENT: {service_name} v{version} → {host} ({region}) [{job_state}]")
 
             deployment_results[service_name][region].append({
                 'host': host,
@@ -268,6 +260,8 @@ def parse_deployment_jobs(build_data):
 
             region = extract_region_from_job(job, build_data)
 
+            print(f"    🔧 POST-SCRIPT: {script_name} for {service_name} on {host} ({region}) [{job_state}]")
+
             post_script_results[service_name][region].append({
                 'host': host,
                 'script': script_name,
@@ -277,6 +271,11 @@ def parse_deployment_jobs(build_data):
                 'exit_status': job.get('exit_status'),
                 'web_url': job.get('web_url', '')
             })
+        else:
+            print(f"    ⚠️ UNMATCHED: Skipping non-deployment script job")
+
+    print(f"Found {sum(len(regions) for regions in deployment_results.values())} deployment regions")
+    print(f"Found {sum(len(regions) for regions in post_script_results.values())} post-script regions")
 
     return deployment_results, post_script_results
 
@@ -286,7 +285,15 @@ def extract_region_from_job(job, build_data):
     Extract region information from job context.
     Looks for region information in job groups or step keys.
     """
-    # Try to find region from step group
+    # Try to find region from step group by looking at the job's step
+    job_step_key = job.get('step_key', '')
+
+    # Look for region patterns in step key
+    region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_step_key)
+    if region_match:
+        return region_match.group(1)
+
+    # Try to find region from step groups in build data
     for step in build_data.get('steps', []):
         if step.get('type') == 'group':
             group_label = step.get('label', '')
@@ -418,7 +425,7 @@ def generate_live_summary_markdown(deployment_results, post_script_results, stat
 
 ## 📊 Real-Time Progress
 
-**Overall Progress:** {progress['progress_percent']:.1f}% ({progress['completed_jobs']}/{progress['total_jobs']} jobs complete)
+**Overall Progress:** {progress['progress_percent']:.1f}% ({progress['completed_jobs']}/{progress['total_jobs']} deployment jobs complete)
 
 | Status | Count | Percentage |
 |--------|--------|------------|
@@ -607,7 +614,8 @@ def main():
     Main function that runs the live deployment monitoring loop.
     Updates the annotation every 10 seconds until pipeline reaches terminal state.
     """
-    print("=== Starting Live Deployment Dashboard ===")
+    print("=== Starting Live Deployment Dashboard v10 ===")
+    print("🔧 FIXED: Progress calculation now only counts deployment jobs, not all script jobs")
 
     update_count = 0
     start_time = datetime.now()
@@ -632,7 +640,9 @@ def main():
         # Parse current deployment state FIRST (always get the latest data)
         deployment_results, post_script_results = parse_deployment_jobs(build_data)
         stats = calculate_deployment_statistics(deployment_results, post_script_results)
-        progress = get_pipeline_progress(build_data)
+
+        # FIXED: Pass deployment_results to progress calculation so it only counts actual deployments
+        progress = get_pipeline_progress(build_data, deployment_results)
 
         # Check if we should stop monitoring AFTER collecting the data
         should_stop, stop_reason = should_stop_monitoring(build_data)
