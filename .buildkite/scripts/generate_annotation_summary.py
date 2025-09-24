@@ -93,24 +93,48 @@ def get_metadata_artifact():
         return None
 
 
-def should_stop_monitoring(build_data):
+def should_stop_monitoring(build_data, deployment_results):
     """
     Determine if we should stop live monitoring based on pipeline state.
-    Stops when we hit the rollback block step or pipeline is finished/failed.
+
+    FIXED: Only stops when:
+    1. Build is in terminal state (passed/failed/canceled), OR
+    2. All deployment jobs are complete AND rollback decision point is reached
+
+    This prevents premature stopping when rollback step appears but deployments are still running.
 
     Returns:
         tuple: (should_stop: bool, reason: str)
     """
     build_state = build_data.get('state', 'unknown')
 
-    print(f"\n=== DEBUG: Stop Monitoring Check ===")
+    print(f"\n=== DEBUG: Stop Monitoring Check (FIXED) ===")
     print(f"Build state: {build_state}")
 
     # Stop if build is in terminal state
     if build_state in ['passed', 'failed', 'canceled']:
         return True, f"Build finished with state: {build_state}"
 
-    # Check all jobs for rollback/redeploy block step
+    # Check if we have any deployments still running or pending
+    active_deployments = 0
+    total_deployments = 0
+
+    for service_name, regions in deployment_results.items():
+        for region, deployments in regions.items():
+            for deployment in deployments:
+                total_deployments += 1
+                if deployment['state'] in ['running', 'scheduled', 'waiting', 'blocked']:
+                    active_deployments += 1
+                    print(f"  🏃 ACTIVE: {service_name} → {deployment['host']} ({region}): {deployment['state']}")
+
+    print(f"📊 Deployment status: {active_deployments} active out of {total_deployments} total")
+
+    # If we still have active deployments, keep monitoring regardless of rollback steps
+    if active_deployments > 0:
+        print(f"🔄 Still have {active_deployments} active deployments - continuing to monitor...")
+        return False, f"Deployments still running ({active_deployments} active)"
+
+    # Check for rollback/redeploy block steps ONLY if all deployments are done
     rollback_jobs = []
     blocked_jobs = []
 
@@ -143,21 +167,31 @@ def should_stop_monitoring(build_data):
         for job in blocked_jobs:
             print(f"  - {job['name']} ({job['type']}, {job['state']})")
 
-    # Check for rollback/redeploy jobs that are blocked (manual intervention needed)
+    # NOW check for rollback decision points - but only if no deployments are active
     for job in rollback_jobs:
-        if job['state'] in ['blocked', 'waiting'] and ('rollback' in job['name'].lower() and 'redeploy' in job['name'].lower()):
-            print(f"  🛑 Found blocked rollback job - stopping monitoring: {job['name']} ({job['state']})")
-            return True, f"Rollback decision point reached: {job['name']} ({job['state']})"
+        if (job['state'] in ['blocked', 'waiting'] and
+            'rollback' in job['name'].lower() and
+            'redeploy' in job['name'].lower()):
+            print(f"  🛑 All deployments complete AND rollback decision reached: {job['name']} ({job['state']})")
+            return True, f"Deployments complete - rollback decision point: {job['name']} ({job['state']})"
 
-    # Check for manual intervention jobs (waiter type that are blocked)
+    # Check for other manual intervention jobs (waiter type that are blocked)
     for job in blocked_jobs:
         if job['type'] == 'waiter' and job['state'] in ['blocked', 'waiting']:
-            print(f"  🛑 Found blocked waiter job - stopping monitoring: {job['name']} ({job['state']})")
-            return True, f"Manual intervention needed: {job['name']} ({job['state']})"
+            # But only stop if it's NOT a deployment-related job and all deployments are done
+            job_name_lower = job['name'].lower()
+            if not any(keyword in job_name_lower for keyword in ['deploy', 'version', 'region']):
+                print(f"  🛑 All deployments complete AND manual intervention needed: {job['name']} ({job['state']})")
+                return True, f"Deployments complete - manual intervention needed: {job['name']} ({job['state']})"
 
-    # Continue monitoring if pipeline is still active
-    print("Pipeline still running, continuing monitoring...")
-    return False, "Pipeline still running"
+    # If we get here, deployments are done but no clear decision point
+    if total_deployments > 0:
+        print("✅ All deployments complete but no clear stop condition - continuing to monitor briefly...")
+        return False, "All deployments complete, monitoring for decision points..."
+
+    # No deployments found yet
+    print("⏰ No deployments detected yet, continuing to monitor...")
+    return False, "No deployments detected yet"
 
 
 def get_pipeline_progress(build_data, deployment_results):
@@ -753,8 +787,9 @@ def main():
         # FIXED: Pass deployment_results to progress calculation so it only counts actual deployments
         progress = get_pipeline_progress(build_data, deployment_results)
 
-        # Check if we should stop monitoring AFTER collecting the data
-        should_stop, stop_reason = should_stop_monitoring(build_data)
+        # FIXED: Check if we should stop monitoring AFTER collecting data AND pass deployment_results
+        should_stop, stop_reason = should_stop_monitoring(build_data, deployment_results)
+
 
         if should_stop and not local_mode:
             print(f"🛑 Detected stop condition: {stop_reason}")
