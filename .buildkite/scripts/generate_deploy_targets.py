@@ -252,8 +252,7 @@ def main():
         'label': ':spiral_note_pad: Generate Deploy Summary',
         'key': deploy_summary_key,
         'command': 'python .buildkite/scripts/generate_annotation_summary.py',
-        'priority': 10,
-        'depends_on': [most_recent_deploy_step_key]
+        'priority': 10
     }]
 
     rollback_snippet = [
