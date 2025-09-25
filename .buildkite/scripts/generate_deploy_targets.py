@@ -157,16 +157,17 @@ def get_service_metadata_dynamically(service_info):
     return all_service_data
 
 
-def create_service_deploy_steps(service_data):
+def create_service_deploy_steps(service_data, region):
     """
-    Create deployment steps for a single service.
-    Replaces the hardcoded create_service_list function.
+    Create deployment steps for a single service in a specific region.
+    FIXED: Now sets Buildkite metadata for each job so region can be tracked via API.
 
     Args:
         service_data: Dictionary containing service metadata
+        region: The deployment region (e.g., 'us-east-1')
 
     Returns:
-        List of deployment step dictionaries
+        List of deployment step dictionaries with region metadata commands
     """
     service_name = service_data['name']
     service_version = service_data['version']
@@ -175,29 +176,68 @@ def create_service_deploy_steps(service_data):
 
     deploy_steps = []
 
+    print(f"  Creating deployment steps for {service_name} in region {region}")
+
     for host in service_hosts:
-        # Main deployment step
-        deploy_steps.append({
+        # Main deployment step with metadata setting commands
+        deploy_step = {
             'label': f':windows: Deploy {service_name} {service_version} to {host}',
-            'command': '.buildkite/scripts/run_mock_deploy.sh',
+            'priority': '-1',
+            'command': [
+                # Set metadata that will be accessible via API
+                f'buildkite-agent meta-data set deploy-region "{region}"',
+                f'buildkite-agent meta-data set deploy-service "{service_name}"',
+                f'buildkite-agent meta-data set deploy-version "{service_version}"',
+                f'buildkite-agent meta-data set deploy-host "{host}"',
+                # Then run the actual deployment
+                '.buildkite/scripts/run_mock_deploy.sh'
+            ],
             'retry': {
                 'automatic': [{'exit_status': '*', 'limit': '10'}]
+            },
+            'env': {
+                'DEPLOY_REGION': region,
+                'DEPLOY_SERVICE': service_name,
+                'DEPLOY_VERSION': service_version,
+                'DEPLOY_HOST': host
             }
-        })
+        }
+
+        deploy_steps.append(deploy_step)
+        print(f"    ✅ Deploy step: {service_name} v{service_version} → {host} (region: {region})")
 
         # Post-deployment script step (if scripts exist)
         if service_scripts and service_scripts[0]:  # Check if there's actually a script
             script_name = service_scripts[0]  # Use first script for now
-            deploy_steps.append({
+
+            post_script_step = {
                 'label': f':gear: Run {script_name} for {service_name} on {host}',
-                'command': f'echo Running {script_name} on {host}...'
-            })
+                'priority': '-2',
+                'command': [
+                    # Set metadata for post-script jobs too
+                    f'buildkite-agent meta-data set deploy-region "{region}"',
+                    f'buildkite-agent meta-data set deploy-service "{service_name}"',
+                    f'buildkite-agent meta-data set deploy-host "{host}"',
+                    f'buildkite-agent meta-data set post-script "{script_name}"',
+                    # Then run the post-deployment script
+                    f'echo Running {script_name} on {host}...'
+                ],
+                'env': {
+                    'DEPLOY_REGION': region,
+                    'DEPLOY_SERVICE': service_name,
+                    'DEPLOY_HOST': host,
+                    'POST_SCRIPT': script_name
+                }
+            }
+
+            deploy_steps.append(post_script_step)
+            print(f"    🔧 Post-script step: {script_name} for {service_name} on {host} (region: {region})")
 
     return deploy_steps
 
 
 def main():
-    print("=== Starting Dynamic Deploy Target Generation ===")
+    print("=== Starting Dynamic Deploy Target Generation (FIXED) ===")
 
     # Load metadata artifact to get service information
     metadata = get_metadata_artifact()
@@ -230,15 +270,18 @@ def main():
     rollback_redeploy_key = create_dynamic_step_key('rollback-redeploy-dynamic')
     deploy_summary_key = create_dynamic_step_key('deploy-summary')
 
-    # Create region groups
+    # FIXED: Create region groups with region-specific service deployments
     region_groups = []
     for region in deploy_regions:
         region_step_key = create_dynamic_step_key(f'{region}-step')
 
+        print(f"\n🌍 Creating deployment group for region: {region}")
+
         # Collect all deployment steps for all services in this region
         all_deploy_steps = []
         for service_name, service_data in all_service_data.items():
-            service_steps = create_service_deploy_steps(service_data)
+            # FIXED: Pass region to create_service_deploy_steps
+            service_steps = create_service_deploy_steps(service_data, region)
             all_deploy_steps.extend(service_steps)
 
         region_groups.append({
@@ -247,12 +290,14 @@ def main():
             'steps': all_deploy_steps
         })
 
+        print(f"  📊 Region {region}: {len(all_deploy_steps)} total steps")
+
     # Create post-deployment steps
     annotation_snippet = [{
         'label': ':spiral_note_pad: Generate Deploy Summary',
         'key': deploy_summary_key,
         'command': 'python .buildkite/scripts/generate_annotation_summary.py',
-        'depends_on': [most_recent_deploy_step_key]
+        'priority': '10'
     }]
 
     rollback_snippet = [
@@ -275,10 +320,16 @@ def main():
         print(f"  Hosts: {', '.join(service_data['hosts'])}")
         print(f"  Scripts: {', '.join(service_data['postscripts'])}")
 
-    print(f"\n=== Pipeline Structure ===")
-    print(f"Region groups: {len(region_groups)}")
+    print(f"\n=== Pipeline Structure (FIXED) ===")
+    print(f"Regions: {len(region_groups)}")
     total_steps = sum(len(group['steps']) for group in region_groups)
     print(f"Total deployment steps: {total_steps}")
+
+    # Count steps per region for verification
+    for group in region_groups:
+        group_name = group['group']
+        step_count = len(group['steps'])
+        print(f"  {group_name}: {step_count} steps")
 
     # Assemble full pipeline
     full_pipeline = benedict({
@@ -294,12 +345,17 @@ def main():
         print("In hosted env, uploading pipeline")
         result = system('buildkite-agent pipeline upload newly_genned_pipeline.yml')
         if result == 0:
-            print("Pipeline uploaded successfully!")
+            print("✅ Pipeline uploaded successfully!")
         else:
-            print(f"Pipeline upload failed with exit code: {result}")
+            print(f"❌ Pipeline upload failed with exit code: {result}")
     else:
         print("Running locally, would have run: buildkite-agent pipeline upload newly_genned_pipeline.yml")
         print("Generated pipeline file: newly_genned_pipeline.yml")
+        print("\n💡 Each deployment job now includes region metadata:")
+        print("   DEPLOY_REGION=us-east-1 (or us-west-1, etc.)")
+        print("   DEPLOY_SERVICE=service-name")
+        print("   DEPLOY_VERSION=1.2.3")
+        print("   DEPLOY_HOST=hostname")
 
 
 if __name__ == "__main__":

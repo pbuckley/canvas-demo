@@ -11,15 +11,19 @@ import datetime
 from benedict import benedict
 import requests
 
+# Global timestamp for consistent step keys across all dynamic step creation
+PIPELINE_TIMESTAMP = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M")
+
 
 def create_dynamic_step_key(prefix_fragment):
     '''
     create a dynamic step key so this dynamic pipeline generator
     can be run multiple times in the same pipeline
     we only need to go to the minute, seconds would be overkill?
+    use PIPELINE_TIMESTAMP so we have one consistent timestamp
+    for all steps created by this script
     '''
-    now = datetime.datetime.now()
-    return prefix_fragment + '-' + now.strftime("%Y-%m-%d-%H-%M")
+    return prefix_fragment + '-' + PIPELINE_TIMESTAMP
 
 
 def generate_pipeline(pipeline_dict, master_input_dict):
