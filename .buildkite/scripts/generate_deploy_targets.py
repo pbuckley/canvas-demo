@@ -184,10 +184,10 @@ def create_service_deploy_steps(service_data, region):
             'label': f':windows: Deploy {service_name} {service_version} to {host}',
             'command': [
                 # Set metadata that will be accessible via API
-                'buildkite-agent meta-data set deploy-region "${DEPLOY_REGION}"',
-                'buildkite-agent meta-data set deploy-service "${DEPLOY_SERVICE}"',
-                'buildkite-agent meta-data set deploy-version "${DEPLOY_VERSION}"',
-                'buildkite-agent meta-data set deploy-host "${DEPLOY_HOST}"',
+                'buildkite-agent meta-data set deploy-region "{region}"',
+                'buildkite-agent meta-data set deploy-service "{service_name}"',
+                'buildkite-agent meta-data set deploy-version "{service_version}"',
+                'buildkite-agent meta-data set deploy-host "{host}"',
                 # Then run the actual deployment
                 '.buildkite/scripts/run_mock_deploy.sh'
             ],
@@ -213,10 +213,10 @@ def create_service_deploy_steps(service_data, region):
                 'label': f':gear: Run {script_name} for {service_name} on {host}',
                 'command': [
                     # Set metadata for post-script jobs too
-                    'buildkite-agent meta-data set deploy-region "${DEPLOY_REGION}"',
-                    'buildkite-agent meta-data set deploy-service "${DEPLOY_SERVICE}"',
-                    'buildkite-agent meta-data set deploy-host "${DEPLOY_HOST}"',
-                    'buildkite-agent meta-data set post-script "${POST_SCRIPT}"',
+                    'buildkite-agent meta-data set deploy-region "{region}"',
+                    'buildkite-agent meta-data set deploy-service "{service_name}"',
+                    'buildkite-agent meta-data set deploy-host "{host}"',
+                    'buildkite-agent meta-data set post-script "{script_name}"',
                     # Then run the post-deployment script
                     f'echo Running {script_name} on {host}...'
                 ],
