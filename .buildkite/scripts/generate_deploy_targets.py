@@ -160,14 +160,14 @@ def get_service_metadata_dynamically(service_info):
 def create_service_deploy_steps(service_data, region):
     """
     Create deployment steps for a single service in a specific region.
-    FIXED: Now includes region metadata in each job so we can track it later.
+    FIXED: Now sets Buildkite metadata for each job so region can be tracked via API.
 
     Args:
         service_data: Dictionary containing service metadata
         region: The deployment region (e.g., 'us-east-1')
 
     Returns:
-        List of deployment step dictionaries with region metadata
+        List of deployment step dictionaries with region metadata commands
     """
     service_name = service_data['name']
     service_version = service_data['version']
@@ -179,10 +179,18 @@ def create_service_deploy_steps(service_data, region):
     print(f"  Creating deployment steps for {service_name} in region {region}")
 
     for host in service_hosts:
-        # Main deployment step with region metadata
+        # Main deployment step with metadata setting commands
         deploy_step = {
             'label': f':windows: Deploy {service_name} {service_version} to {host}',
-            'command': '.buildkite/scripts/run_mock_deploy.sh',
+            'command': [
+                # Set metadata that will be accessible via API
+                'buildkite-agent meta-data set deploy-region "${DEPLOY_REGION}"',
+                'buildkite-agent meta-data set deploy-service "${DEPLOY_SERVICE}"',
+                'buildkite-agent meta-data set deploy-version "${DEPLOY_VERSION}"',
+                'buildkite-agent meta-data set deploy-host "${DEPLOY_HOST}"',
+                # Then run the actual deployment
+                '.buildkite/scripts/run_mock_deploy.sh'
+            ],
             'retry': {
                 'automatic': [{'exit_status': '*', 'limit': '10'}]
             },
@@ -203,7 +211,15 @@ def create_service_deploy_steps(service_data, region):
 
             post_script_step = {
                 'label': f':gear: Run {script_name} for {service_name} on {host}',
-                'command': f'echo Running {script_name} on {host}...',
+                'command': [
+                    # Set metadata for post-script jobs too
+                    'buildkite-agent meta-data set deploy-region "${DEPLOY_REGION}"',
+                    'buildkite-agent meta-data set deploy-service "${DEPLOY_SERVICE}"',
+                    'buildkite-agent meta-data set deploy-host "${DEPLOY_HOST}"',
+                    'buildkite-agent meta-data set post-script "${POST_SCRIPT}"',
+                    # Then run the post-deployment script
+                    f'echo Running {script_name} on {host}...'
+                ],
                 'env': {
                     'DEPLOY_REGION': region,
                     'DEPLOY_SERVICE': service_name,

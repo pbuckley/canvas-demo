@@ -335,85 +335,126 @@ def parse_deployment_jobs(build_data):
     return deployment_results, post_script_results
 
 
+def extract_region_from_job_metadata(job_id, build_data, api_token, org_name, pipeline_name, build_number):
+    """
+    Extract region information from job metadata using Buildkite API.
+    Each job sets its own deploy-region metadata that we can query.
+
+    Args:
+        job_id: The job ID to check metadata for
+        build_data: Full build data (for fallback)
+        api_token: Buildkite API token
+        org_name: Organization name
+        pipeline_name: Pipeline name
+        build_number: Build number
+
+    Returns:
+        str: Region name or 'unknown-region'
+    """
+    job_id_short = job_id[:8]
+
+    print(f"        🔍 Checking job metadata for job {job_id_short}...")
+
+    # Get job metadata using the jobs API endpoint
+    job_url = f"https://api.buildkite.com/v2/organizations/{org_name}/pipelines/{pipeline_name}/builds/{build_number}/jobs/{job_id}"
+    headers = {'Authorization': f"Bearer {api_token}"}
+
+    try:
+        r = requests.get(job_url, headers=headers)
+        r.raise_for_status()
+        job_data = r.json()
+
+        # Check if the job has metadata
+        if 'meta_data' in job_data and job_data['meta_data']:
+            job_metadata = job_data['meta_data']
+            print(f"        📋 Job metadata keys: {list(job_metadata.keys())}")
+
+            deploy_region = job_metadata.get('deploy-region')
+            if deploy_region:
+                print(f"        ✅ Found deploy-region in job metadata: {deploy_region}")
+                return deploy_region
+            else:
+                print(f"        ❌ No deploy-region in job metadata")
+        else:
+            print(f"        ⚠️ No metadata available for job {job_id_short}")
+
+    except requests.RequestException as e:
+        print(f"        ❌ Failed to fetch job metadata: {e}")
+
+    # Fallback to build-level metadata inference
+    return extract_region_fallback(build_data)
+
+
+def extract_region_fallback(build_data):
+    """
+    Fallback method to extract region from build metadata when job metadata isn't available.
+    This uses the regions selected by the user as a best-guess.
+    """
+    print(f"        🔄 Using fallback region extraction...")
+
+    build_meta = build_data.get('meta_data', {})
+    region_keys = [key for key in build_meta.keys() if key.startswith('region-inputs-')]
+
+    if region_keys:
+        # Get the most recent region input
+        latest_region_key = sorted(region_keys)[-1]
+        regions_string = build_meta[latest_region_key]
+        selected_regions = regions_string.strip().split('\n')
+
+        print(f"        Available regions from metadata: {selected_regions}")
+
+        if len(selected_regions) == 1:
+            region = selected_regions[0]
+            print(f"        ✅ Single region deployment: {region}")
+            return region
+        elif len(selected_regions) > 1:
+            # Use first region as fallback
+            region = selected_regions[0]
+            print(f"        🤷‍♂️ Multiple regions, using first: {region}")
+            return region
+
+    print(f"        ❌ No region information available")
+    return 'unknown-region'
+
+
 def extract_region_from_job(job, build_data):
     """
-    Extract region information from job context.
-    Enhanced with comprehensive debug output to troubleshoot region detection.
+    Main region extraction function - now uses job metadata approach.
+    Falls back to build metadata if job metadata isn't available.
     """
     job_name = job.get('name', 'Unknown Job')
-    job_step_key = job.get('step_key')
-    job_id = job.get('id', 'unknown')[:8]
+    job_id = job.get('id', 'unknown')
+    job_id_short = job_id[:8] if job_id else 'unknown'
 
-    print(f"\n    🔍 DEBUG: Extracting region for job '{job_name}' (ID: {job_id})")
-    print(f"        Step key: {job_step_key}")
-    print(f"        Job type: {job.get('type')}")
+    print(f"\n    🔍 DEBUG: Extracting region for job '{job_name}' (ID: {job_id_short})")
 
-    # Method 1: Try to find region from step key
-    if job_step_key and isinstance(job_step_key, str):
-        print(f"        Searching step key: '{job_step_key}'")
-        region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_step_key)
-        if region_match:
-            region = region_match.group(1)
-            print(f"        ✅ Found region in step key: {region}")
-            return region
-        else:
-            print(f"        ❌ No region pattern found in step key")
-    else:
-        print(f"        ⚠️ No step key available")
+    # Get API credentials and build info from environment
+    org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
+    pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
+    build_number = getenv("BUILDKITE_BUILD_NUMBER")
 
-    # Method 2: Look for region in job group structure
-    # Check if job has a step property that might contain group info
-    job_step = job.get('step', {})
-    if job_step:
-        print(f"        Job step data: {job_step}")
-
-    # Method 3: Try to find region from step groups in build data
-    print(f"        Checking build data for step groups...")
-    steps_found = 0
-    for step in build_data.get('steps', []):
-        steps_found += 1
-        step_type = step.get('type', 'unknown')
-        step_label = step.get('label', '')
-        step_key = step.get('key', '')
-
-        print(f"        Step #{steps_found}: type={step_type}, label='{step_label}', key='{step_key}'")
-
-        if step_type == 'group' and 'Region' in step_label:
-            region_match = re.search(r'Region\s+([a-z]+-[a-z]+-\d+)', step_label)
-            if region_match:
-                region = region_match.group(1)
-                print(f"        ✅ Found region in group label: {region}")
+    # Only try metadata approach if we have all required info and not in local mode
+    if all([org_name, pipeline_name, build_number, job_id]) and getenv("BUILDKITE_COMPUTE_TYPE"):
+        print(f"        🔍 Attempting job metadata extraction...")
+        api_token = fetch_bk_api_token()
+        if api_token:
+            region = extract_region_from_job_metadata(
+                job_id, build_data, api_token, org_name, pipeline_name, build_number
+            )
+            if region != 'unknown-region':
                 return region
-
-    if steps_found == 0:
-        print(f"        ⚠️ No steps found in build data")
-
-    # Method 4: Try to extract region from job name itself
-    print(f"        Searching job name for region patterns: '{job_name}'")
-    region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_name.lower())
-    if region_match:
-        region = region_match.group(1)
-        print(f"        ✅ Found region in job name: {region}")
-        return region
+        else:
+            print(f"        ❌ No API token available for metadata lookup")
     else:
-        print(f"        ❌ No region pattern found in job name")
+        print(f"        ⚠️ Skipping metadata lookup (missing info or local mode)")
+        if not org_name: print(f"            Missing org_name")
+        if not pipeline_name: print(f"            Missing pipeline_name")
+        if not build_number: print(f"            Missing build_number")
+        if not job_id: print(f"            Missing job_id")
+        if not getenv("BUILDKITE_COMPUTE_TYPE"): print(f"            In local mode")
 
-    # Method 5: Check if there's any metadata or environment info
-    job_env = job.get('env', {})
-    if job_env:
-        print(f"        Job env data: {job_env}")
-
-    # Last resort: check build metadata for region info
-    build_meta = build_data.get('meta_data', {})
-    if build_meta:
-        print(f"        Build metadata keys: {list(build_meta.keys())}")
-        # Look for any region-related metadata
-        for key, value in build_meta.items():
-            if 'region' in key.lower():
-                print(f"        Found region metadata: {key} = {value}")
-
-    print(f"        ❌ FALLBACK: Using 'unknown-region'")
-    return 'unknown-region'
+    # Fallback to build metadata
+    return extract_region_fallback(build_data)
 
 
 def calculate_deployment_statistics(deployment_results, post_script_results):
