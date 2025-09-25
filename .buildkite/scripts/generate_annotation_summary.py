@@ -338,36 +338,81 @@ def parse_deployment_jobs(build_data):
 def extract_region_from_job(job, build_data):
     """
     Extract region information from job context.
-    Looks for region information in job groups or step keys.
+    Enhanced with comprehensive debug output to troubleshoot region detection.
     """
-    # Try to find region from step group by looking at the job's step
+    job_name = job.get('name', 'Unknown Job')
     job_step_key = job.get('step_key')
+    job_id = job.get('id', 'unknown')[:8]
 
-    # Only search if job_step_key is actually a string
+    print(f"\n    🔍 DEBUG: Extracting region for job '{job_name}' (ID: {job_id})")
+    print(f"        Step key: {job_step_key}")
+    print(f"        Job type: {job.get('type')}")
+
+    # Method 1: Try to find region from step key
     if job_step_key and isinstance(job_step_key, str):
-        # Look for region patterns in step key
+        print(f"        Searching step key: '{job_step_key}'")
         region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_step_key)
         if region_match:
-            return region_match.group(1)
+            region = region_match.group(1)
+            print(f"        ✅ Found region in step key: {region}")
+            return region
+        else:
+            print(f"        ❌ No region pattern found in step key")
+    else:
+        print(f"        ⚠️ No step key available")
 
-    # Try to find region from step groups in build data
+    # Method 2: Look for region in job group structure
+    # Check if job has a step property that might contain group info
+    job_step = job.get('step', {})
+    if job_step:
+        print(f"        Job step data: {job_step}")
+
+    # Method 3: Try to find region from step groups in build data
+    print(f"        Checking build data for step groups...")
+    steps_found = 0
     for step in build_data.get('steps', []):
-        if step.get('type') == 'group':
-            group_label = step.get('label', '')
-            if 'Region' in group_label:
-                region_match = re.search(r'Region\s+([a-z]+-[a-z]+-\d+)', group_label)
-                if region_match:
-                    return region_match.group(1)
+        steps_found += 1
+        step_type = step.get('type', 'unknown')
+        step_label = step.get('label', '')
+        step_key = step.get('key', '')
 
-    # Try to extract region from job name itself as a fallback
-    job_name = job.get('name', '')
-    if job_name:
-        # Look for region patterns in the job name
-        region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_name.lower())
-        if region_match:
-            return region_match.group(1)
+        print(f"        Step #{steps_found}: type={step_type}, label='{step_label}', key='{step_key}'")
 
-    # Fallback to parsing from job name or return default
+        if step_type == 'group' and 'Region' in step_label:
+            region_match = re.search(r'Region\s+([a-z]+-[a-z]+-\d+)', step_label)
+            if region_match:
+                region = region_match.group(1)
+                print(f"        ✅ Found region in group label: {region}")
+                return region
+
+    if steps_found == 0:
+        print(f"        ⚠️ No steps found in build data")
+
+    # Method 4: Try to extract region from job name itself
+    print(f"        Searching job name for region patterns: '{job_name}'")
+    region_match = re.search(r'([a-z]+-[a-z]+-\d+)', job_name.lower())
+    if region_match:
+        region = region_match.group(1)
+        print(f"        ✅ Found region in job name: {region}")
+        return region
+    else:
+        print(f"        ❌ No region pattern found in job name")
+
+    # Method 5: Check if there's any metadata or environment info
+    job_env = job.get('env', {})
+    if job_env:
+        print(f"        Job env data: {job_env}")
+
+    # Last resort: check build metadata for region info
+    build_meta = build_data.get('meta_data', {})
+    if build_meta:
+        print(f"        Build metadata keys: {list(build_meta.keys())}")
+        # Look for any region-related metadata
+        for key, value in build_meta.items():
+            if 'region' in key.lower():
+                print(f"        Found region metadata: {key} = {value}")
+
+    print(f"        ❌ FALLBACK: Using 'unknown-region'")
     return 'unknown-region'
 
 
