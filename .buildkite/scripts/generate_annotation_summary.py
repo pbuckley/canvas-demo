@@ -419,8 +419,8 @@ def extract_region_fallback(build_data):
 
 def extract_region_from_job(job, build_data):
     """
-    Main region extraction function - now uses job metadata approach.
-    Falls back to build metadata if job metadata isn't available.
+    Extract region information from job context.
+    FIXED: Uses job metadata from build data (no separate API call needed).
     """
     job_name = job.get('name', 'Unknown Job')
     job_id = job.get('id', 'unknown')
@@ -428,33 +428,127 @@ def extract_region_from_job(job, build_data):
 
     print(f"\n    🔍 DEBUG: Extracting region for job '{job_name}' (ID: {job_id_short})")
 
-    # Get API credentials and build info from environment
-    org_name = getenv("BUILDKITE_ORGANIZATION_SLUG")
-    pipeline_name = getenv("BUILDKITE_PIPELINE_SLUG")
-    build_number = getenv("BUILDKITE_BUILD_NUMBER")
+    # METHOD 1: Check if job metadata is available in the build data
+    # The Buildkite API includes job metadata in the build response, not separate endpoints
 
-    # Only try metadata approach if we have all required info and not in local mode
-    if all([org_name, pipeline_name, build_number, job_id]) and getenv("BUILDKITE_COMPUTE_TYPE"):
-        print(f"        🔍 Attempting job metadata extraction...")
-        api_token = fetch_bk_api_token()
-        if api_token:
-            region = extract_region_from_job_metadata(
-                job_id, build_data, api_token, org_name, pipeline_name, build_number
-            )
-            if region != 'unknown-region':
-                return region
+    # First, let's see what's actually in the job data
+    print(f"        📋 Available job fields: {list(job.keys())}")
+
+    # Check various possible locations for metadata in the job data
+    possible_metadata_fields = ['meta_data', 'metadata', 'env', 'environment']
+
+    for field_name in possible_metadata_fields:
+        if field_name in job:
+            field_data = job[field_name]
+            print(f"        🔍 Found {field_name}: {field_data}")
+
+            if isinstance(field_data, dict):
+                # Look for our deploy-region metadata
+                deploy_region = field_data.get('deploy-region')
+                if deploy_region:
+                    print(f"        ✅ Found deploy-region in {field_name}: {deploy_region}")
+                    return deploy_region
+
+                # Also check for environment variables (in case they're exposed)
+                deploy_region_env = field_data.get('DEPLOY_REGION')
+                if deploy_region_env:
+                    print(f"        ✅ Found DEPLOY_REGION in {field_name}: {deploy_region_env}")
+                    return deploy_region_env
+
+    # METHOD 2: Check if metadata is available at the build level with job-specific keys
+    # Sometimes metadata gets stored as "job-{job-id}-deploy-region"
+    build_meta = build_data.get('meta_data', {})
+    if build_meta:
+        print(f"        🔍 Checking build metadata for job-specific keys...")
+
+        # Look for job-specific metadata keys
+        job_meta_key = f"job-{job_id_short}-deploy-region"
+        if job_meta_key in build_meta:
+            region = build_meta[job_meta_key]
+            print(f"        ✅ Found job-specific metadata: {job_meta_key} = {region}")
+            return region
+
+        # Also try full job ID
+        job_meta_key_full = f"job-{job_id}-deploy-region"
+        if job_meta_key_full in build_meta:
+            region = build_meta[job_meta_key_full]
+            print(f"        ✅ Found job-specific metadata (full ID): {job_meta_key_full} = {region}")
+            return region
+
+    # METHOD 3: Wait, let's check if the job has actually set metadata yet
+    job_state = job.get('state', 'unknown')
+    if job_state in ['scheduled', 'assigned']:
+        print(f"        ⏰ Job is in '{job_state}' state - metadata may not be set yet")
+        print(f"        💡 Jobs only set metadata when they start running")
+
+    # METHOD 4: Check if we can infer from job command
+    job_command = job.get('command', '')
+    if isinstance(job_command, list):
+        job_command = ' && '.join(job_command)
+
+    if 'DEPLOY_REGION' in job_command:
+        print(f"        🔍 Found DEPLOY_REGION reference in command")
+        # We know the job will set metadata, but we need to wait for it to run
+        print(f"        ⏰ Metadata will be available once job starts executing")
+
+    # FALLBACK: Use build-level region metadata
+    print(f"        🔄 Using fallback region extraction...")
+
+    region_keys = [key for key in build_meta.keys() if key.startswith('region-inputs-')]
+
+    if region_keys:
+        # Get the most recent region input
+        latest_region_key = sorted(region_keys)[-1]
+        regions_string = build_meta[latest_region_key]
+        selected_regions = regions_string.strip().split('\n')
+
+        print(f"        Available regions from metadata: {selected_regions}")
+
+        # IMPROVED HEURISTIC: Try to match job timing with region order
+        if len(selected_regions) > 1:
+            print(f"        🧠 IMPROVED HEURISTIC: Trying to match job with region...")
+
+            # Get all deployment jobs from this build
+            all_deploy_jobs = []
+            for build_job in build_data.get('jobs', []):
+                if (build_job.get('type') == 'script' and
+                    ':windows: Deploy' in build_job.get('name', '')):
+                    all_deploy_jobs.append(build_job)
+
+            if all_deploy_jobs:
+                try:
+                    # Find this job's position
+                    job_position = next(i for i, j in enumerate(all_deploy_jobs)
+                                      if j.get('id') == job_id)
+
+                    # Estimate which region based on job creation order
+                    total_jobs = len(all_deploy_jobs)
+                    jobs_per_region = total_jobs // len(selected_regions)
+
+                    if jobs_per_region > 0:
+                        region_index = min(job_position // jobs_per_region, len(selected_regions) - 1)
+                        estimated_region = selected_regions[region_index]
+
+                        print(f"        💡 ESTIMATED: Job #{job_position} of {total_jobs} → region #{region_index} = {estimated_region}")
+                        print(f"        ⚠️ This is a best-guess until job sets its own metadata")
+                        return estimated_region
+
+                except (StopIteration, ZeroDivisionError, IndexError) as e:
+                    print(f"        ❌ Heuristic failed: {e}")
+
+        # Single region case
+        if len(selected_regions) == 1:
+            region = selected_regions[0]
+            print(f"        ✅ Single region deployment: {region}")
+            return region
         else:
-            print(f"        ❌ No API token available for metadata lookup")
-    else:
-        print(f"        ⚠️ Skipping metadata lookup (missing info or local mode)")
-        if not org_name: print(f"            Missing org_name")
-        if not pipeline_name: print(f"            Missing pipeline_name")
-        if not build_number: print(f"            Missing build_number")
-        if not job_id: print(f"            Missing job_id")
-        if not getenv("BUILDKITE_COMPUTE_TYPE"): print(f"            In local mode")
+            # Multiple regions, use first as last resort
+            region = selected_regions[0]
+            print(f"        🤷‍♂️ Multiple regions, using first: {region}")
+            return region
 
-    # Fallback to build metadata
-    return extract_region_fallback(build_data)
+    print(f"        ❌ No region information available at all")
+    return 'unknown-region'
 
 
 def calculate_deployment_statistics(deployment_results, post_script_results):
