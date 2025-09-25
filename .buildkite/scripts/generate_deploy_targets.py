@@ -182,6 +182,7 @@ def create_service_deploy_steps(service_data, region):
         # Main deployment step with metadata setting commands
         deploy_step = {
             'label': f':windows: Deploy {service_name} {service_version} to {host}',
+            'priority': '-1',
             'command': [
                 # Set metadata that will be accessible via API
                 f'buildkite-agent meta-data set deploy-region "{region}"',
@@ -211,6 +212,7 @@ def create_service_deploy_steps(service_data, region):
 
             post_script_step = {
                 'label': f':gear: Run {script_name} for {service_name} on {host}',
+                'priority': '-2',
                 'command': [
                     # Set metadata for post-script jobs too
                     f'buildkite-agent meta-data set deploy-region "{region}"',
@@ -295,7 +297,7 @@ def main():
         'label': ':spiral_note_pad: Generate Deploy Summary',
         'key': deploy_summary_key,
         'command': 'python .buildkite/scripts/generate_annotation_summary.py',
-        'priority': 10
+        'priority': '10'
     }]
 
     rollback_snippet = [
