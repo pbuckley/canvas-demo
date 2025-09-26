@@ -308,7 +308,7 @@ def main():
         {
             'label': ':rewind: Rollback / Redeploy',
             'key': rollback_redeploy_key,
-            'command': 'python .buildkite/scripts/get_releases.py',
+            'command': 'python .buildkite/scripts/get_releases.py --rollback',
             'depends_on': [rollback_block_key]
         }
     ]
