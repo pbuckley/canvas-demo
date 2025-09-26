@@ -24,6 +24,7 @@ make one up on the spot?
 ### automatic service pipeline adding
 
 why would I manually add a pipeline tagged `deployable-svc`? tf this up
+and/or make this use a template so we enforce our convention of metadata
 
 ### support windows, linux, mac server targets
 
