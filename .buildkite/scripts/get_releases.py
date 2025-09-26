@@ -3,11 +3,13 @@
 # call the Buildkite API to get releases for our services
 # build an input step based on the services latest released versions
 # which are in fact meta-data on their named pipelines
+# Enhanced with caching to avoid duplicate API calls during rollback
 
 from urllib.request import Request, urlopen
 from os import getenv, popen, system
 import json
 import datetime
+import argparse
 from benedict import benedict
 import requests
 
@@ -68,12 +70,112 @@ def fetch_bk_api_token():
         return getenv("BK_API_TOKEN")
 
 
+def save_service_cache(version_dict, host_dict, post_dict, tagged_pipelines):
+    """
+    Save all service metadata to a cache artifact for future rollback scenarios.
+
+    Args:
+        version_dict: Service versions dictionary
+        host_dict: Service hosts dictionary
+        post_dict: Service post-scripts dictionary
+        tagged_pipelines: Raw pipeline data from API
+
+    Returns:
+        str: Filename of the created cache file
+    """
+    cache_filename = create_dynamic_step_key('service-cache') + '.json'
+
+    cache_data = {
+        "cache_created_at": datetime.datetime.now().isoformat(),
+        "cache_version": "1.0",
+        "service_metadata": {
+            "versions": version_dict,
+            "hosts": host_dict,
+            "post_scripts": post_dict
+        },
+        "pipeline_data": {
+            pipeline['name']: {
+                'slug': pipeline['slug'],
+                'url': pipeline['url'],
+                'tags': pipeline.get('tags', [])
+            }
+            for pipeline in tagged_pipelines
+        },
+        "statistics": {
+            "total_services": len(version_dict),
+            "services_with_hosts": len(host_dict),
+            "services_with_scripts": len(post_dict)
+        }
+    }
+
+    print(f"💾 Creating service cache with {len(version_dict)} services")
+
+    with open(cache_filename, 'w') as cache_file:
+        json.dump(cache_data, cache_file, indent=2, sort_keys=True)
+
+    # Upload the cache artifact
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        print(f"📤 Uploading service cache artifact: {cache_filename}")
+        upload_result = str.strip(popen(f"buildkite-agent artifact upload {cache_filename}").read())
+        print(f"Cache upload result: {upload_result}")
+    else:
+        print(f"🔧 Local mode: Would upload cache artifact {cache_filename}")
+
+    return cache_filename
+
+
+def load_service_cache():
+    """
+    Load service metadata from previously cached artifact.
+
+    Returns:
+        tuple: (version_dict, host_dict, post_dict) or (None, None, None) if cache unavailable
+    """
+    print("🔍 Looking for existing service cache...")
+
+    if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
+        # Download cache artifacts
+        download_cmd = 'buildkite-agent artifact download "service-cache*.json" .'
+        download_result = str.strip(popen(download_cmd).read())
+        print(f"Cache download attempt: {download_result}")
+
+    # Find the most recent cache file
+    cache_list_cmd = "ls -1 service-cache*.json 2>/dev/null | sort -r | head -1"
+    cache_filename = str.strip(popen(cache_list_cmd).read())
+
+    if not cache_filename:
+        print("❌ No service cache found - will need to fetch fresh data")
+        return None, None, None
+
+    try:
+        print(f"📖 Loading service cache from: {cache_filename}")
+        with open(cache_filename, 'r') as cache_file:
+            cache_data = json.load(cache_file)
+
+        cache_age = datetime.datetime.fromisoformat(cache_data['cache_created_at'])
+        age_minutes = (datetime.datetime.now() - cache_age).total_seconds() / 60
+
+        print(f"✅ Cache loaded successfully (age: {age_minutes:.1f} minutes)")
+        print(f"🔢 Cached services: {cache_data['statistics']['total_services']}")
+
+        service_metadata = cache_data['service_metadata']
+        return (
+            service_metadata['versions'],
+            service_metadata['hosts'],
+            service_metadata['post_scripts']
+        )
+
+    except (IOError, json.JSONDecodeError, KeyError) as e:
+        print(f"⚠️ Error loading cache: {e}")
+        return None, None, None
+
+
 def get_tagged_pipelines(api_token, org_name, given_tag):
     '''
     Get all pipelines with a given tag, e.g. deployable-svc
     Enhanced with pagination support for organizations with many pipelines
     '''
-    print(f"Getting pipelines containing tag: {given_tag}")
+    print(f"🔍 Getting pipelines containing tag: {given_tag}")
     headers = {'Authorization': "Bearer " + api_token}
 
     # Support pagination - Buildkite API returns 30 items per page by default
@@ -95,7 +197,7 @@ def get_tagged_pipelines(api_token, org_name, given_tag):
             break
 
         all_pipelines.extend(pipelines_batch)
-        print(f"Fetched page {page}: {len(pipelines_batch)} pipelines")
+        print(f"📄 Fetched page {page}: {len(pipelines_batch)} pipelines")
 
         # If we got fewer than per_page, we're done
         if len(pipelines_batch) < per_page:
@@ -109,7 +211,7 @@ def get_tagged_pipelines(api_token, org_name, given_tag):
         if pipeline.get('tags') and given_tag in pipeline['tags']
     ]
 
-    print(f"Found {len(filtered_list)} pipelines with tag '{given_tag}' out of {len(all_pipelines)} total pipelines")
+    print(f"🎯 Found {len(filtered_list)} pipelines with tag '{given_tag}' out of {len(all_pipelines)} total pipelines")
     return filtered_list
 
 
@@ -134,7 +236,7 @@ def extract_metadata_from_builds(svc_name, builds_json, metadata_extractors):
         for metadata_key, (data_set, result_dict) in metadata_extractors.items():
             if metadata_key in metadata:
                 value = metadata[metadata_key]
-                print(f"Found {metadata_key} for {svc_name}: {value}")
+                print(f"  📋 Found {metadata_key} for {svc_name}: {value}")
 
                 if metadata_key == "rel-ver":
                     data_set.add(value)
@@ -164,7 +266,7 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
     total_services = len(deployable_service_pipelines)
     processed_services = 0
 
-    print(f"Processing {total_services} deployable services...")
+    print(f"🚀 Processing {total_services} deployable services...")
 
     for pipeline_details in deployable_service_pipelines:
         svc_name = pipeline_details['name']
@@ -179,10 +281,10 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
             svc_builds_json = json.loads(svc_builds.decode('utf-8'))
 
             if not svc_builds_json:
-                print(f"No builds found for service {svc_name}")
+                print(f"⚠️ No builds found for service {svc_name}")
                 continue
 
-            print(f"Found {len(svc_builds_json)} builds for {svc_name}")
+            print(f"📦 Found {len(svc_builds_json)} builds for {svc_name}")
 
             # Initialize sets for this service
             svc_versions_set = set()
@@ -202,10 +304,10 @@ def get_release_versions(api_token, org_name, deployable_service_pipelines):
             processed_services += 1
 
         except Exception as e:
-            print(f"Error processing service {svc_name}: {str(e)}")
+            print(f"❌ Error processing service {svc_name}: {str(e)}")
             continue
 
-    print(f"\n=== Processing Summary ===")
+    print(f"\n=== 📊 Processing Summary ===")
     print(f"Services with versions: {len(svc_dict)}")
     print(f"Services with hosts: {len(host_dict)}")
     print(f"Services with post-scripts: {len(post_dict)}")
@@ -255,7 +357,7 @@ def create_service_yaml_fields(service_name, version_dict, host_dict, post_dict)
             "required": False
         })
 
-    print(f"Created {len(fields)} fields for service: {service_name}")
+    print(f"🔧 Created {len(fields)} fields for service: {service_name}")
     return fields
 
 
@@ -285,20 +387,46 @@ def create_metadata_artifact(deploy_step_key, master_service_dict):
         "generation-timestamp": datetime.datetime.now().isoformat()
     }
 
-    print(f"Creating metadata artifact with {len(master_service_dict)} services")
+    print(f"📋 Creating metadata artifact with {len(master_service_dict)} services")
 
     with open(json_filename, 'w') as json_file:
         json.dump(meta_data_dict, json_file, indent=4)
 
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
-        print(f"In hosted env, uploading artifact {json_filename}")
+        print(f"📤 In hosted env, uploading artifact {json_filename}")
         artifact_uploaded = str.strip(popen(f"buildkite-agent artifact upload {json_filename}").read())
         print(f"Artifact uploaded: {artifact_uploaded}")
     else:
-        print(f"Running locally, would upload artifact: {json_filename}")
+        print(f"🔧 Running locally, would upload artifact: {json_filename}")
+
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description='Generate dynamic Buildkite deployment input steps',
+        epilog='''
+Examples:
+  # Fresh discovery (first run):
+  python get_releases.py
+
+  # Rollback mode (uses cached data):
+  python get_releases.py --rollback
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument(
+        '--rollback',
+        action='store_true',
+        help='Use cached service data instead of API discovery (faster rollback mode)'
+    )
+
+    return parser.parse_args()
 
 
 def main():
+    args = parse_args()
+
     org_name = "demo"
     given_tag = "deployable-svc"
     api_token = fetch_bk_api_token()
@@ -307,8 +435,8 @@ def main():
     input_step_key = create_dynamic_step_key('get-deploy-inputs')
     deploy_step_key = create_dynamic_step_key('gen-deploy-inputs')
 
-    print(f"Using input_step_key: {input_step_key}")
-    print(f"Using deploy_step_key: {deploy_step_key}")
+    print(f"🔑 Using input_step_key: {input_step_key}")
+    print(f"🔑 Using deploy_step_key: {deploy_step_key}")
 
     # Create base pipeline structure
     base_pipeline = benedict({
@@ -327,21 +455,39 @@ def main():
         'queue': 'q1'
     })
 
-    # Discover all tagged pipelines
-    tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
+    if args.rollback:
+        print("🔄 ROLLBACK MODE: Attempting to use cached service data...")
+        version_dict, host_dict, post_dict = load_service_cache()
 
-    if not tagged_pipelines:
-        print(f"No pipelines found with tag '{given_tag}'. Exiting.")
-        return
+        if not version_dict:
+            print("⚠️ No cache available - falling back to fresh API discovery")
+            args.rollback = False  # Fall through to fresh discovery
+        else:
+            print(f"🎯 Successfully loaded cache with {len(version_dict)} services")
+            print("⚡ Skipping expensive API calls - generating pipeline from cache")
 
-    # Extract metadata from all discovered services
-    version_dict, host_dict, post_dict = get_release_versions(api_token, org_name, tagged_pipelines)
+    if not args.rollback:
+        print("🔍 FRESH DISCOVERY MODE: Fetching latest service data from API...")
 
-    if not version_dict:
-        print("No release versions found for any services. Check your metadata configuration.")
-        return
+        # Discover all tagged pipelines (expensive API call)
+        tagged_pipelines = get_tagged_pipelines(api_token, org_name, given_tag)
 
-    print(f"\n=== Final Results ===")
+        if not tagged_pipelines:
+            print(f"❌ No pipelines found with tag '{given_tag}'. Exiting.")
+            return
+
+        # Extract metadata from all discovered services (very expensive API calls)
+        version_dict, host_dict, post_dict = get_release_versions(api_token, org_name, tagged_pipelines)
+
+        if not version_dict:
+            print("❌ No release versions found for any services. Check your metadata configuration.")
+            return
+
+        # Save the cache for future rollback scenarios
+        cache_filename = save_service_cache(version_dict, host_dict, post_dict, tagged_pipelines)
+        print(f"💾 Service cache saved as: {cache_filename}")
+
+    print(f"\n=== 📊 Final Results ===")
     print(f"Services with versions: {list(version_dict.keys())}")
     print(f"Services with hosts: {list(host_dict.keys())}")
     print(f"Services with post-scripts: {list(post_dict.keys())}")
@@ -353,7 +499,7 @@ def main():
             service_name, version_dict, host_dict, post_dict
         )
 
-    print(f"\nGenerated input configuration for {len(master_input_dict)} services")
+    print(f"\n🔧 Generated input configuration for {len(master_input_dict)} services")
 
     # Generate the final pipeline
     generate_pipeline(base_pipeline, master_input_dict)
@@ -363,10 +509,18 @@ def main():
 
     # Upload pipeline
     if getenv("BUILDKITE_COMPUTE_TYPE") is not None:
-        print("In hosted env, uploading pipeline")
-        system('buildkite-agent pipeline upload generated_pipeline.yml')
+        print("📤 In hosted env, uploading pipeline")
+        upload_result = system('buildkite-agent pipeline upload generated_pipeline.yml')
+        if upload_result == 0:
+            print("✅ Pipeline uploaded successfully!")
+        else:
+            print(f"❌ Pipeline upload failed with exit code: {upload_result}")
     else:
-        print("Running locally, would have run: buildkite-agent pipeline upload generated_pipeline.yml")
+        print("🔧 Running locally, would have run: buildkite-agent pipeline upload generated_pipeline.yml")
+
+    # Performance summary
+    mode = "ROLLBACK (cached)" if args.rollback else "FRESH DISCOVERY"
+    print(f"\n🏁 {mode} mode completed for {len(version_dict)} services")
 
 
 if __name__ == "__main__":
