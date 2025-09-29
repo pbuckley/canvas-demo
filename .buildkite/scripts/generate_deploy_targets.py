@@ -287,8 +287,7 @@ def main():
         region_groups.append({
             'group': f':rocket: :earth_americas: Region {region} Parallel Deploys',
             'key': region_step_key,
-            'steps': all_deploy_steps,
-            'priority': -1
+            'steps': all_deploy_steps
         })
 
         print(f"  📊 Region {region}: {len(all_deploy_steps)} total steps")
@@ -298,7 +297,7 @@ def main():
         'label': ':spiral_note_pad: Generate Deploy Summary',
         'key': deploy_summary_key,
         'command': 'python .buildkite/scripts/generate_annotation_summary.py',
-        'priority': 10
+        'priority': 100
     }]
 
     rollback_snippet = [
