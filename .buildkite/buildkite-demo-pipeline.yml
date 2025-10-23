@@ -23,7 +23,7 @@ steps:
         artifact_paths: "coverage/**/*"
 
   # Mobile builds
-  - group: ":mobile_phone: Mobile Builds"
+  - group: ":iphone: Mobile Builds"
     steps:
       - label: ":ios: iOS Build"
         command: .buildkite/scripts/ios_build.sh
