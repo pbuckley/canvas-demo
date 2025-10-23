@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "--- :ios: Xcode Build"
+echo ""
+echo "Building workspace MyApp.xcworkspace"
+echo "  Scheme: MyApp"
+echo "  Configuration: Release"
+echo "  Platform: iOS"
+echo ""
+sleep 1
+echo "=== BUILD TARGET MyApp OF PROJECT MyApp WITH CONFIGURATION Release ==="
+echo ""
+echo "Check dependencies"
+echo "  Signing Identity: \"Apple Distribution: Acme Inc (A1B2C3D4E5)\""
+echo "  Provisioning Profile: \"MyApp Distribution\""
+echo ""
+sleep 1
+echo "CompileSwiftSources normal arm64 (in target 'MyApp' from project 'MyApp')"
+echo "  SwiftDriver\\ Compilation MyApp normal arm64"
+echo "    Compiling AppDelegate.swift"
+echo "    Compiling SceneDelegate.swift"
+echo "    Compiling ViewController.swift"
+echo "    Compiling HomeViewController.swift"
+echo "    Compiling SettingsViewController.swift"
+echo "    Compiling NetworkManager.swift"
+echo "    Compiling DataManager.swift"
+sleep 2
+echo "    Compiling 47 Swift source files"
+echo "    Linking MyApp (arm64)"
+echo ""
+echo "CompileAssetCatalog MyApp/Assets.xcassets (in target 'MyApp' from project 'MyApp')"
+echo "  actool --output-format human-readable-text --compress-pngs ..."
+sleep 1
+echo "  /* com.apple.actool.compilation-results */"
+echo "  Assets.car"
+echo ""
+echo "ProcessInfoPlistFile MyApp/Info.plist (in target 'MyApp' from project 'MyApp')"
+echo "  builtin-infoPlistUtility MyApp/Info.plist -producttype com.apple.product-type.application"
+echo ""
+echo "CodeSign /Build/Products/Release-iphoneos/MyApp.app (in target 'MyApp' from project 'MyApp')"
+echo "  Signing Identity: \"Apple Distribution: Acme Inc (A1B2C3D4E5)\""
+sleep 1
+echo ""
+echo "** BUILD SUCCEEDED **"
+echo ""
+echo "Build time: 47.3s"
+
+echo ""
+echo "+++ :white_check_mark: iOS build completed successfully"
+echo "App bundle: MyApp.app (arm64)"
+echo "Build for: iPhone, iPad"
+echo "Minimum iOS version: 15.0"

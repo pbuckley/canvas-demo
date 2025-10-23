@@ -6,49 +6,37 @@ steps:
   - group: ":package: Build & Test"
     steps:
       - label: ":java: Java Maven Build"
-        command: |
-          mvn clean package
-          mvn test
+        command: .buildkite/scripts/maven_build.sh
         artifact_paths: "target/*.jar"
 
       - label: ":javascript: Node.js Build"
-        command: |
-          npm ci
-          npm run build
-          npm test
+        command: .buildkite/scripts/nodejs_build.sh
         artifact_paths: "dist/**/*"
 
       - label: ":remix: Remix Framework"
-        command: |
-          npm ci
-          npm run build
-          npm run test
+        command: .buildkite/scripts/remix_build.sh
         env:
           NODE_ENV: "production"
 
       - label: ":python: Python Tests"
-        command: |
-          pip install -r requirements.txt
-          pytest --cov=.
+        command: .buildkite/scripts/python_tests.sh
         artifact_paths: "coverage/**/*"
 
   # Mobile builds
   - group: ":mobile_phone: Mobile Builds"
     steps:
       - label: ":ios: iOS Build"
-        command: |
-          xcodebuild -project MyApp.xcodeproj -scheme MyApp build
+        command: .buildkite/scripts/ios_build.sh
         agents:
           queue: "macos-fleet"
 
       - label: ":android: Android Build"
-        command: |
-          ./gradlew assembleDebug
+        command: .buildkite/scripts/android_build.sh
         artifact_paths: "app/build/outputs/apk/**/*.apk"
 
   # Security scanning with auto-retry on simulated failure
   - label: ":lock: Security Scan"
-    command: ".buildkite/scripts/security-scan.sh"
+    command: ".buildkite/scripts/security_scan.sh"
     plugins:
       - docker#v5.11.0:
           image: "aquasec/trivy:latest"
@@ -65,22 +53,14 @@ steps:
 
   # Integration tests
   - label: ":test_tube: Integration Tests"
-    command: ".buildkite/scripts/integration-tests.sh"
+    command: ".buildkite/scripts/integration_tests.sh"
 
   # S3 artifact upload (native integration)
   - label: ":s3: Upload to S3"
-    command: |
-      buildkite-agent artifact download "**/*" artifacts/
-      aws s3 sync artifacts/ s3://my-buildkite-artifacts/${BUILDKITE_PIPELINE_SLUG}/${BUILDKITE_BUILD_NUMBER}/
+    command: .buildkite/scripts/s3_upload.sh
     env:
       AWS_DEFAULT_REGION: "us-east-1"
 
   # Final security report
   - label: ":shield: Security Report"
-    command: |
-      echo "Generating consolidated security report..."
-      buildkite-agent artifact download "coverage/**/*" .
-      # Mock security dashboard upload
-      curl -X POST https://security.example.com/api/reports \
-        -H "Content-Type: application/json" \
-        -d "{\"build\": \"${BUILDKITE_BUILD_NUMBER}\", \"status\": \"pass\"}"
+    command: .buildkite/scripts/security_report.sh

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD=${BUILDKITE_BUILD_NUMBER:-123}
+PIPELINE=${BUILDKITE_PIPELINE_SLUG:-demo-pipeline}
+
+echo "--- :shield: Generating Security Report"
+echo ""
+echo "Downloading build artifacts..."
+sleep 1
+echo "  ✓ Coverage reports"
+echo "  ✓ Vulnerability scan results"
+echo "  ✓ SAST analysis"
+echo "  ✓ Dependency audit"
+echo ""
+
+echo "Consolidating security findings..."
+sleep 1
+echo ""
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║         SECURITY ASSESSMENT SUMMARY                       ║"
+echo "╠═══════════════════════════════════════════════════════════╣"
+echo "║ Build: #$BUILD                                             "
+echo "║ Pipeline: $PIPELINE                                        "
+echo "║ Timestamp: $(date -Iseconds)                               "
+echo "║                                                            "
+echo "║ VULNERABILITY SCANNING                                     "
+echo "║   Critical:  0                                             "
+echo "║   High:      0                                             "
+echo "║   Medium:    2                                             "
+echo "║   Low:       5                                             "
+echo "║                                                            "
+echo "║ CODE COVERAGE                                              "
+echo "║   Java:      92%                                           "
+echo "║   Python:    95%                                           "
+echo "║   JavaScript: 87%                                          "
+echo "║                                                            "
+echo "║ STATIC ANALYSIS (SAST)                                     "
+echo "║   Security Issues: 0                                       "
+echo "║   Code Smells:     3 (Low severity)                        "
+echo "║   Bugs:            0                                       "
+echo "║                                                            "
+echo "║ DEPENDENCY AUDIT                                           "
+echo "║   Total Dependencies:    247                               "
+echo "║   Outdated:              12                                "
+echo "║   With Known Vulns:      2 (Low severity)                  "
+echo "║                                                            "
+echo "║ STATUS: ✓ PASSED                                           "
+echo "╚═══════════════════════════════════════════════════════════╝"
+echo ""
+
+sleep 1
+echo "--- :cloud: Uploading to Security Dashboard"
+echo ""
+echo "POST https://security.example.com/api/reports"
+echo "  Content-Type: application/json"
+echo "  Authorization: Bearer ••••••••"
+sleep 1
+echo ""
+echo "Response: 201 Created"
+echo "{"
+echo "  \"reportId\": \"rpt_$(date +%s)\","
+echo "  \"build\": \"$BUILD\","
+echo "  \"status\": \"pass\","
+echo "  \"score\": 94,"
+echo "  \"url\": \"https://security.example.com/reports/$PIPELINE/$BUILD\""
+echo "}"
+echo ""
+
+echo "+++ :white_check_mark: Security report generated and uploaded"
+echo "View report: https://security.example.com/reports/$PIPELINE/$BUILD"
