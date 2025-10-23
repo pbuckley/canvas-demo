@@ -1,5 +1,5 @@
 agents:
-  queue: "elastic-linux"  # Auto-scaling agent queue
+  queue: "hosted-autoscaling-linux"  # Auto-scaling agent queue
 
 steps:
   # Parallel build steps showcasing language support
@@ -28,7 +28,7 @@ steps:
       - label: ":ios: iOS Build"
         command: .buildkite/scripts/ios_build.sh
         agents:
-          queue: "macos-fleet"
+          queue: "hosted-autoscaling-macos"
 
       - label: ":android: Android Build"
         command: .buildkite/scripts/android_build.sh
