@@ -37,10 +37,6 @@ steps:
   # Security scanning with auto-retry on simulated failure
   - label: ":lock: Security Scan"
     command: ".buildkite/scripts/security_scan.sh"
-    plugins:
-      - docker#v5.11.0:
-          image: "aquasec/trivy:latest"
-          mount-checkout: true
     retry:
       automatic:
         - exit_status: 2  # Simulated transient failure
