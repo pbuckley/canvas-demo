@@ -13,7 +13,7 @@ steps:
         command: .buildkite/scripts/nodejs_build.sh
         artifact_paths: "dist/**/*"
 
-      - label: ":remix: Remix Framework"
+      - label: ":react: Remix Framework"
         command: .buildkite/scripts/remix_build.sh
         env:
           NODE_ENV: "production"
