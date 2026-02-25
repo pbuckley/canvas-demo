@@ -53,7 +53,7 @@ BASE_URL="https://api.buildkite.com/v2"
 [[ ! "$NUM_RUNS" =~ ^[1-9][0-9]*$ ]] && { err "number_of_runs must be a positive integer."; exit 1; }
 
 # ── Dependency check ──────────────────────────────────────────
-for cmd in curl jq bc; do
+for cmd in curl jq; do
   command -v "$cmd" &>/dev/null || { err "Required tool not found: $cmd"; exit 1; }
 done
 
@@ -324,12 +324,15 @@ done
 echo -e "${BOLD}└─────────┴──────────┴──────────┴──────────┘${RESET}"
 
 # ── Summary stats ─────────────────────────────────────────────
+
 avg() {
   local -n arr=$1
   [[ ${#arr[@]} -eq 0 ]] && echo "N/A" && return
   local sum=0
   for v in "${arr[@]}"; do sum=$((sum + v)); done
-  echo "scale=1; $sum / ${#arr[@]}" | bc
+  local n=${#arr[@]}
+  # Integer division + one decimal place, no bc needed
+  echo "$(( sum / n )).$(( (sum * 10 / n) % 10 ))"
 }
 
 min_val() {
